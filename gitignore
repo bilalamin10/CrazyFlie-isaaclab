@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# Isaac Lab / Training
+logs/
+_isaac_sim/
+*.npy
+*.pth
+*.onnx
+
+# OS
+.DS_Store
