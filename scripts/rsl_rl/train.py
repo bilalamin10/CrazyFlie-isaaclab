@@ -200,8 +200,19 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     dump_pickle(os.path.join(log_dir, "params", "agent.pkl"), agent_cfg)
 
     # run training
-    runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
+    # # Monkey-patch a counter
+    # original_learn = runner.learn
 
+    # def patched_learn(*args, **kwargs):
+    #     for local_it in range(original_learn.__self__.current_iteration, kwargs.get('num_learning_iterations', 10000)):
+    #         result = original_learn(*args, **kwargs)  # not ideal
+    #         if hasattr(env.unwrapped, 'update_curriculum_from_iteration'):
+    #             env.unwrapped.update_curriculum_from_iteration(local_it + 1)
+    #     return result
+
+    # runner.learn = patched_learn.__get__(runner)  # bind to instance
+    runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
+   
     # close the simulator
     env.close()
 

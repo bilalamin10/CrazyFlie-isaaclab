@@ -1,12 +1,13 @@
 #!/bin/bash
 
 # --- CONFIGURATION ---
-NUM_RUNS=3
+NUM_RUNS=1
 TASK_NAME="Isaac-Quadcopter-Direct-v0"
-SCRIPT_PATH="scripts/rsl_rl/train.py"
+SCRIPT_PATH="scripts/rsl_rl/play.py"
+TRAJECTORIES=("static" "circle" "lemniscate")
 
 # --- FIXED SEED (or change this if you want different seeds) ---
-FIXED_SEED=111 
+FIXED_SEED=333 
 # Experiment Name will be the main folder for grouping all 10 runs. 
 # We'll use a simple group name here.
 GROUP_NAME="Sweep_10x_SimpleLog"

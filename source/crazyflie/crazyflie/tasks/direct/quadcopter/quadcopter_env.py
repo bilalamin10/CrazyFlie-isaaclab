@@ -65,6 +65,12 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     noise_pos: float = 0.1      # e.g., +/- 1 cm (Mocap/GPS noise)
     noise_quat: float = 0.2     # Orientation noise (IMU filter error)
 
+    # New: curriculum for static goals
+    static_goal_curriculum: bool = True
+    static_goal_min_dist: float = 0.5     # start easy
+    static_goal_max_dist: float = 4.0     # target difficulty
+    #static_goal_curriculum_timesteps: int = 20_000_000  # when to reach max
+
     # Trajectory Settings
     # Options: "lemniscate" (Figure-8), "circle", "lissajous" (Random knots)
     #trajectory_type: str = "lemniscate"
@@ -118,11 +124,11 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     # reward scales
     lin_vel_reward_scale = -0.2     
     ang_vel_reward_scale = -0.05
-    distance_to_goal_reward_scale = 15.0
+    distance_to_goal_reward_scale = 25.0
     
     # Penalizes the drone for being tilted (not horizontal).
     # More negative = stronger penalty.
-    tilt_penalty_scale: float = -2.0
+    tilt_penalty_scale: float = -1.0
 
 
 class QuadcopterEnv(DirectRLEnv):
@@ -142,6 +148,18 @@ class QuadcopterEnv(DirectRLEnv):
 
         # Goal position
         self._desired_pos_w = torch.zeros(self.num_envs, 3, device=self.device)
+
+        #Goal position offset
+        self.fixed_goal_offset_x = torch.zeros(self.num_envs, device=self.device)
+        self.fixed_goal_offset_y = torch.zeros(self.num_envs, device=self.device)
+
+        self.current_max_goal_dist = torch.full((self.num_envs,), self.cfg.static_goal_min_dist, device=self.device)
+        #self.global_progress = 0.0  # we'll update this from runner or approximate
+        
+        #self.curriculum_iteration = 0
+        self.curriculum_counter = 0
+        self.max_curriculum_steps = 15_000_000  # ← tune this! (e.g. when you want full difficulty)
+        self.curriculum_update_freq = 512               # Update every N physics steps (to reduce overhead)
 
         # Logging
         self._episode_sums = {
@@ -295,6 +313,10 @@ class QuadcopterEnv(DirectRLEnv):
             target_x = radius * torch.sin(3 * theta)
             target_y = radius * torch.sin(2 * theta)
 
+        elif self.cfg.trajectory_type == "static":
+            target_x = self.fixed_goal_offset_x
+            target_y = self.fixed_goal_offset_y
+
         # --- Apply to Global Coordinates ---
         self._desired_pos_w[:, 0] = target_x + self._terrain.env_origins[:, 0]
         self._desired_pos_w[:, 1] = target_y + self._terrain.env_origins[:, 1]
@@ -318,6 +340,7 @@ class QuadcopterEnv(DirectRLEnv):
         
         # Map action to Torques
         self._moment[:, 0, :] = self.cfg.moment_scale * self._actions[:, 1:]
+        self._maybe_update_curriculum()
 
 
 
@@ -560,9 +583,29 @@ class QuadcopterEnv(DirectRLEnv):
             target_y = radius * torch.sin(2 * theta)
             
         elif self.cfg.trajectory_type == "static":
-            # Static target at center (or random offset if you prefer)
-            target_x[:] = 0.0
-            target_y[:] = 0.0
+            # # Static target at center (or random offset if you prefer)
+            # target_x[:] = 0.0
+            # target_y[:] = 0.0
+            # Random goal in XY (e.g., disk of radius 4m)
+
+            # angle = torch.rand(len(env_ids), device=self.device) * 2 * torch.pi
+            # dist = torch.rand(len(env_ids), device=self.device) * 2.0
+            # target_x = dist * torch.cos(angle)
+            # target_y = dist * torch.sin(angle)
+            # self.fixed_goal_offset_x[env_ids] = target_x
+            # self.fixed_goal_offset_y[env_ids] = target_y
+
+            # Use current curriculum value per env
+            max_d = self.current_max_goal_dist[env_ids]
+
+            angle = torch.rand(len(env_ids), device=self.device) * 2 * torch.pi
+            dist = torch.rand(len(env_ids), device=self.device) * max_d   # 0 to current_max
+
+            target_x = dist * torch.cos(angle)
+            target_y = dist * torch.sin(angle)
+
+            self.fixed_goal_offset_x[env_ids] = target_x
+            self.fixed_goal_offset_y[env_ids] = target_y
 
         # --- Apply to Global Coordinates ---
         self._desired_pos_w[env_ids, 0] = target_x + self._terrain.env_origins[env_ids, 0]
@@ -575,6 +618,63 @@ class QuadcopterEnv(DirectRLEnv):
         # self._desired_pos_w[env_ids, 1] = radius * torch.sin(angle) + self._terrain.env_origins[env_ids, 1]
         # # Z = Constant Height
         # self._desired_pos_w[env_ids, 2] = self.cfg.trajectory_z_height
+
+    # def update_curriculum(self, progress: float):
+    #     """progress: 0..1 (total timesteps / total expected timesteps)"""
+    #     if not self.cfg.static_goal_curriculum:
+    #         return
+    #     factor = min(1.0, progress)
+    #     target_dist = self.cfg.static_goal_min_dist + factor * (
+    #         self.cfg.static_goal_max_dist - self.cfg.static_goal_min_dist
+    #     )
+    #     self.current_max_goal_dist[:] = target_dist
+
+    # # New method
+    # def update_curriculum_from_iteration(self, current_iteration: int):
+    #     if not self.cfg.static_goal_curriculum:
+    #         return
+    #     progress = min(1.0, current_iteration / self.max_curriculum_iterations)
+    #     target_dist = (
+    #         self.cfg.static_goal_min_dist +
+    #         progress * (self.cfg.static_goal_max_dist - self.cfg.static_goal_min_dist)
+    #     )
+    #     self.current_max_goal_dist[:] = target_dist
+
+    #     # Optional: log current value so you see it in console/TensorBoard extras
+    #     self.extras["Metrics/curr_max_goal_dist"] = target_dist
+
+    def _maybe_update_curriculum(self):
+        """Called every physics step — very cheap."""
+        self.curriculum_counter += 1
+
+        if self.curriculum_counter % self.curriculum_update_freq != 0:
+            return
+
+        if not self.cfg.static_goal_curriculum:
+            return
+
+        # Linear progress from 0 → 1
+        progress = min(1.0, self.curriculum_counter / float(self.max_curriculum_steps))
+
+        target_dist = (
+            self.cfg.static_goal_min_dist +
+            progress * (self.cfg.static_goal_max_dist - self.cfg.static_goal_min_dist)
+        )
+
+        self.current_max_goal_dist[:] = target_dist
+
+        # Nice console feedback (only every ~5–10 seconds of training)
+        if self.curriculum_counter % 20000 == 0:
+            print(
+                f"[Curriculum] Step {self.curriculum_counter:,} | "
+                f"progress={progress:.3f} | "
+                f"max_goal_dist = {self.current_max_goal_dist.mean().item():.2f} m"
+            )
+
+        # Log to TensorBoard (rsl_rl automatically logs self.extras["log"])
+        if "log" not in self.extras:
+            self.extras["log"] = {}
+        self.extras["log"]["Metrics/curr_max_goal_dist"] = target_dist
 
     def _set_debug_vis_impl(self, debug_vis: bool):
         # create markers if necessary for the first time
