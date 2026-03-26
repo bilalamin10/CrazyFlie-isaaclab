@@ -158,8 +158,8 @@ class QuadcopterEnv(DirectRLEnv):
         
         #self.curriculum_iteration = 0
         self.curriculum_counter = 0
-        self.max_curriculum_steps = 15_000_000  # ← tune this! (e.g. when you want full difficulty)
-        self.curriculum_update_freq = 512               # Update every N physics steps (to reduce overhead)
+        #self.max_curriculum_steps = 15_000_000  # ← tune this! (e.g. when you want full difficulty)
+        #self.curriculum_update_freq = 50               # Update every N physics steps (to reduce overhead)
 
         # Logging
         self._episode_sums = {
@@ -644,17 +644,22 @@ class QuadcopterEnv(DirectRLEnv):
     #     self.extras["Metrics/curr_max_goal_dist"] = target_dist
 
     def _maybe_update_curriculum(self):
-        """Called every physics step — very cheap."""
+    #"""Fast curriculum ramp - tuned for short test runs and real training."""
         self.curriculum_counter += 1
 
-        if self.curriculum_counter % self.curriculum_update_freq != 0:
+    # Update every 64 steps (faster response)
+        if self.curriculum_counter % 64 != 0:
             return
 
         if not self.cfg.static_goal_curriculum:
             return
 
-        # Linear progress from 0 → 1
-        progress = min(1.0, self.curriculum_counter / float(self.max_curriculum_steps))
+        # Rough estimation: ~120-150 steps per iteration
+        # So 500 iterations ≈ 60,000 - 75,000 steps
+        estimated_iter = self.curriculum_counter // 128
+
+        # === MAIN CHANGE: Reach 4.0m around iteration 480-500 ===
+        progress = min(1.0, estimated_iter / 200.0)
 
         target_dist = (
             self.cfg.static_goal_min_dist +
@@ -663,15 +668,15 @@ class QuadcopterEnv(DirectRLEnv):
 
         self.current_max_goal_dist[:] = target_dist
 
-        # Nice console feedback (only every ~5–10 seconds of training)
-        if self.curriculum_counter % 20000 == 0:
+        # Print progress more frequently so you can see it clearly
+        if estimated_iter % 50 == 0 and estimated_iter > 0:
             print(
-                f"[Curriculum] Step {self.curriculum_counter:,} | "
+                f"[Curriculum] Iter ~{estimated_iter:3d} / 500 | "
                 f"progress={progress:.3f} | "
-                f"max_goal_dist = {self.current_max_goal_dist.mean().item():.2f} m"
+                f"max_goal_dist = {self.current_max_goal_dist.mean().item():.3f} m"
             )
 
-        # Log to TensorBoard (rsl_rl automatically logs self.extras["log"])
+        # Log to TensorBoard
         if "log" not in self.extras:
             self.extras["log"] = {}
         self.extras["log"]["Metrics/curr_max_goal_dist"] = target_dist
