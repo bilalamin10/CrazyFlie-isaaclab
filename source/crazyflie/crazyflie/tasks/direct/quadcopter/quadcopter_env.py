@@ -63,7 +63,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     noise_lin_vel: float = 0.05  # e.g., +/- 0.05 m/s (Optical Flow/GPS noise)
     noise_ang_vel: float = 0.02  # e.g., +/- 0.02 rad/s (Gyroscope noise)
     noise_pos: float = 0.1      # e.g., +/- 1 cm (Mocap/GPS noise)
-    noise_quat: float = 0.2     # Orientation noise (IMU filter error)
+    noise_quat: float = 0.1     # Orientation noise (IMU filter error)
 
     # New: curriculum for static goals
     static_goal_curriculum: bool = True
