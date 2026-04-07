@@ -26,7 +26,63 @@ from isaaclab.utils import math as math_utils
 from isaaclab_assets import CRAZYFLIE_CFG  # isort: skip
 from isaaclab.markers import CUBOID_MARKER_CFG  # isort: skip
 
+# fuzzy class implementation
+class SimpleFuzzyTiltPenalty:
+    """Simple fuzzy logic for adaptive tilt penalty."""
 
+    def __init__(self, device):
+        self.device = device
+        self.debug_counter = 0
+        self.strength = 0.3     # Start very soft (0.0 = no fuzzy, 1.0 = full fuzzy)
+
+    def _tri_mf(self, x, a, b, c):
+        """Triangle membership function."""
+        return torch.clamp(torch.min((x - a) / (b - a), (c - x) / (c - b)), 0.0, 1.0)
+
+    def compute(self, tilt_error: torch.Tensor, vel_error: torch.Tensor) -> torch.Tensor:
+        """Return adaptive multiplier for tilt penalty (0.3 = lenient, 2.0 = strict)."""
+        # Tilt error memberships
+        tilt_low = self._tri_mf(tilt_error, 0.0, 0.0, 0.4)
+        tilt_med = self._tri_mf(tilt_error, 0.2, 0.5, 0.8)
+        tilt_high = self._tri_mf(tilt_error, 0.6, 1.0, 1.0)
+
+        # Velocity error memberships
+        vel_low = self._tri_mf(vel_error, 0.0, 0.0, 0.6)
+        vel_med = self._tri_mf(vel_error, 0.3, 0.8, 1.3)
+        vel_high = self._tri_mf(vel_error, 1.0, 1.5, 2.0)
+
+        # Fuzzy rules (Mamdani)
+        rule1 = torch.min(tilt_low, vel_low)      # Very lenient
+        rule2 = torch.min(tilt_med, vel_med)
+        rule3 = torch.min(tilt_high, vel_high)    # Strict
+
+        # # Output fuzzy sets
+        # out_low = rule1 * 0.5
+        # out_med = rule2 * 0.9
+        # out_high = rule3 * 1.4
+
+        # # Defuzzify (centroid approximation)
+        # numerator = out_low * 0.5 + out_med * 0.9 + out_high * 1.4
+        # denominator = out_low + out_med + out_high + 1e-8
+        # adaptive_factor = numerator / denominator
+
+        numerator = rule1 * 0.4 + rule2 * 0.8 + rule3 * 1.3
+        denominator = rule1 + rule2 + rule3 + 1e-8
+        adaptive_factor = numerator / denominator
+
+        # Apply strength (makes fuzzy very gentle at the beginning)
+        adaptive_factor = 1.0 + self.strength * (adaptive_factor - 1.0)
+        #adaptive_factor = torch.clamp(adaptive_factor, 0.4, 1.5)
+
+        # === DEBUG PRINTS (every 200 steps) ===
+        self.debug_counter += 1
+        if self.debug_counter % 200 == 0:
+            print(f"[Fuzzy Debug] tilt_error={tilt_error.mean().item():.3f} | "
+                  f"vel_error={vel_error.mean().item():.3f} | "
+                  f"adaptive_factor={adaptive_factor.mean().item():.3f}")
+
+        return torch.clamp(adaptive_factor, 0.4, 1.5)
+    
 class QuadcopterEnvWindow(BaseEnvWindow):
     """Window manager for the Quadcopter environment."""
 
@@ -122,13 +178,13 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     moment_scale = 0.01
 
     # reward scales
-    lin_vel_reward_scale = -0.2     
-    ang_vel_reward_scale = -0.05
-    distance_to_goal_reward_scale = 25.0
+    lin_vel_reward_scale = -0.02     
+    ang_vel_reward_scale = -0.015
+    distance_to_goal_reward_scale = 35.0
     
     # Penalizes the drone for being tilted (not horizontal).
     # More negative = stronger penalty.
-    tilt_penalty_scale: float = -1.0
+    tilt_penalty_scale: float = -0.5
 
 
 class QuadcopterEnv(DirectRLEnv):
@@ -161,6 +217,10 @@ class QuadcopterEnv(DirectRLEnv):
         #self.max_curriculum_steps = 15_000_000  # ← tune this! (e.g. when you want full difficulty)
         #self.curriculum_update_freq = 50               # Update every N physics steps (to reduce overhead)
 
+        #fuzzy Logic
+        self.fuzzy_tilt = SimpleFuzzyTiltPenalty(self.device)
+        self.fuzzy_strength_curriculum = 0.3   # start low
+
         # Logging
         self._episode_sums = {
             key: torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
@@ -171,6 +231,7 @@ class QuadcopterEnv(DirectRLEnv):
                 "tilt_penalty",
             ]
         }
+
         # Get specific body indices
         self._body_id = self._robot.find_bodies("body")[0]
         self._robot_mass = self._robot.root_physx_view.get_masses()[0].sum()
@@ -179,6 +240,12 @@ class QuadcopterEnv(DirectRLEnv):
 
         # add handle for debug visualization (this is set to a valid handle inside set_debug_vis)
         self.set_debug_vis(self.cfg.debug_vis)
+        
+    def update_fuzzy_strength(self):
+        # Ramp strength slowly with curriculum
+        progress = min(1.0, self.curriculum_counter / 5_000_000)   # adjust number as needed
+        self.fuzzy_tilt.strength = 0.3 + progress * 0.7   # from 0.3 → 1.0
+        #self.fuzzy_tilt = SimpleFuzzyTiltPenalty(self.device)
 
     def _setup_scene(self):
         self._robot = Articulation(self.cfg.robot)
@@ -414,36 +481,81 @@ class QuadcopterEnv(DirectRLEnv):
 
         return {"policy": obs}
 
+
+    # this _get_rewards is with fuzzy logic
     def _get_rewards(self) -> torch.Tensor:
         lin_vel = torch.sum(torch.square(self._robot.data.root_lin_vel_b), dim=1)
         ang_vel = torch.sum(torch.square(self._robot.data.root_ang_vel_b), dim=1)
         distance_to_goal = torch.linalg.norm(self._desired_pos_w - self._robot.data.root_pos_w, dim=1)
         distance_to_goal_mapped = 1 - torch.tanh(distance_to_goal / 0.8)
-        local_up_vec = torch.tensor([0.0, 0.0, 1.0], device=self.device).expand(self.num_envs, 3)
-        # --- Calculate New Tilt Penalty ---
-        # Get the robot's "up" vector in the world frame
-        robot_up_vec_w = math_utils.quat_apply(self._robot.data.root_quat_w, local_up_vec)
-        
-        # Calculate the dot product with the world's "up" vector (Z-axis)
-        # 1.0 = perfectly upright, 0.0 = 90-degree tilt
-        tilt_dot_product = robot_up_vec_w[:, 2] 
 
-        # The error is the deviation from 1.0
-        # 0.0 = no error, 1.0 = 90-degree tilt error
-        tilt_error = 1.0 - tilt_dot_product
+        # --- Fuzzy Adaptive Tilt Penalty ---
+        local_up_vec = torch.tensor([0.0, 0.0, 1.0], device=self.device).expand(self.num_envs, 3)
+        robot_up_vec_w = math_utils.quat_apply(self._robot.data.root_quat_w, local_up_vec)
+        tilt_error = 1.0 - robot_up_vec_w[:, 2] # 0 = upright, 1 = 90°
+
+        vel_error = torch.norm(self._robot.data.root_lin_vel_b, dim=1) / 3.0   # normalized
+
+        #Fuzzy Adaptive Filter
+        adaptive_tilt_factor = self.fuzzy_tilt.compute(tilt_error, vel_error)
+
+        tilt_penalty = tilt_error * self.cfg.tilt_penalty_scale * adaptive_tilt_factor
 
         rewards = {
             "lin_vel": lin_vel * self.cfg.lin_vel_reward_scale * self.step_dt,
             "ang_vel": ang_vel * self.cfg.ang_vel_reward_scale * self.step_dt,
             "distance_to_goal": distance_to_goal_mapped * self.cfg.distance_to_goal_reward_scale * self.step_dt,
-            "tilt_penalty": tilt_error * self.cfg.tilt_penalty_scale * self.step_dt,
+            "tilt_penalty": tilt_penalty * self.step_dt,
         }
+
         reward = torch.sum(torch.stack(list(rewards.values())), dim=0)
+
+        reward = torch.clamp(reward, -15.0, 40.0)  # Prevent extreme values
+        reward[self.reset_terminated] -= 10.0
+
+        # # Extra penalty when drone dies (prevents policy from learning to crash)
+        # died_mask = self.reset_terminated
+        # reward[died_mask] -= 10.0
+
         # Logging
         for key, value in rewards.items():
             self._episode_sums[key] += value
+
         return reward
 
+    # #  enable this _get_rewards without fuzzy logic
+    # def _get_rewards(self) -> torch.Tensor:
+    #     lin_vel = torch.sum(torch.square(self._robot.data.root_lin_vel_b), dim=1)
+    #     ang_vel = torch.sum(torch.square(self._robot.data.root_ang_vel_b), dim=1)
+    #     distance_to_goal = torch.linalg.norm(self._desired_pos_w - self._robot.data.root_pos_w, dim=1)
+    #     distance_to_goal_mapped = 1 - torch.tanh(distance_to_goal / 0.8)
+
+    #     # Simple fixed tilt penalty (no fuzzy for now)
+    #     local_up_vec = torch.tensor([0.0, 0.0, 1.0], device=self.device).expand(self.num_envs, 3)
+    #     robot_up_vec_w = math_utils.quat_apply(self._robot.data.root_quat_w, local_up_vec)
+    #     tilt_error = 1.0 - robot_up_vec_w[:, 2]
+
+    #     tilt_penalty = tilt_error * self.cfg.tilt_penalty_scale
+
+    #     rewards = {
+    #         "lin_vel": lin_vel * self.cfg.lin_vel_reward_scale * self.step_dt,
+    #         "ang_vel": ang_vel * self.cfg.ang_vel_reward_scale * self.step_dt,
+    #         "distance_to_goal": distance_to_goal_mapped * self.cfg.distance_to_goal_reward_scale * self.step_dt,
+    #         "tilt_penalty": tilt_penalty * self.step_dt,
+    #     }
+
+    #     reward = torch.sum(torch.stack(list(rewards.values())), dim=0)
+
+    #     # === CRITICAL SAFETY ===
+    #     reward = torch.clamp(reward, -10.0, 30.0)
+    #     reward[self.reset_terminated] -= 15.0   # strong death penalty
+
+    #     # Logging
+    #     for key, value in rewards.items():
+    #         self._episode_sums[key] += value
+
+    #     return reward
+    
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         time_out = self.episode_length_buf >= self.max_episode_length - 1
         died = torch.logical_or(
@@ -680,6 +792,8 @@ class QuadcopterEnv(DirectRLEnv):
         if "log" not in self.extras:
             self.extras["log"] = {}
         self.extras["log"]["Metrics/curr_max_goal_dist"] = target_dist
+
+        self.update_fuzzy_strength()
 
     def _set_debug_vis_impl(self, debug_vis: bool):
         # create markers if necessary for the first time
