@@ -26,62 +26,110 @@ from isaaclab.utils import math as math_utils
 from isaaclab_assets import CRAZYFLIE_CFG  # isort: skip
 from isaaclab.markers import CUBOID_MARKER_CFG  # isort: skip
 
-# fuzzy class implementation
+# # fuzzy class implementation logic 1
+
+# class SimpleFuzzyTiltPenalty:
+#     """Simple fuzzy logic for adaptive tilt penalty."""
+
+#     def __init__(self, device):
+#         self.device = device
+#         self.debug_counter = 0
+#         self.strength = 0.3     # Start very soft (0.0 = no fuzzy, 1.0 = full fuzzy)
+
+#     def _tri_mf(self, x, a, b, c):
+#         """Triangle membership function."""
+#         return torch.clamp(torch.min((x - a) / (b - a), (c - x) / (c - b)), 0.0, 1.0)
+
+#     def compute(self, tilt_error: torch.Tensor, vel_error: torch.Tensor) -> torch.Tensor:
+#         """Return adaptive multiplier for tilt penalty (0.3 = lenient, 2.0 = strict)."""
+#         # Tilt error memberships
+#         tilt_low = self._tri_mf(tilt_error, 0.0, 0.0, 0.4)
+#         tilt_med = self._tri_mf(tilt_error, 0.2, 0.5, 0.8)
+#         tilt_high = self._tri_mf(tilt_error, 0.6, 1.0, 1.0)
+
+#         # Velocity error memberships
+#         vel_low = self._tri_mf(vel_error, 0.0, 0.0, 0.6)
+#         vel_med = self._tri_mf(vel_error, 0.3, 0.8, 1.3)
+#         vel_high = self._tri_mf(vel_error, 1.0, 1.5, 2.0)
+
+#         # Fuzzy rules (Mamdani)
+#         rule1 = torch.min(tilt_low, vel_low)      # Very lenient
+#         rule2 = torch.min(tilt_med, vel_med)
+#         rule3 = torch.min(tilt_high, vel_high)    # Strict
+
+#         # # Output fuzzy sets
+#         # out_low = rule1 * 0.5
+#         # out_med = rule2 * 0.9
+#         # out_high = rule3 * 1.4
+
+#         # # Defuzzify (centroid approximation)
+#         # numerator = out_low * 0.5 + out_med * 0.9 + out_high * 1.4
+#         # denominator = out_low + out_med + out_high + 1e-8
+#         # adaptive_factor = numerator / denominator
+
+#         numerator = rule1 * 0.4 + rule2 * 0.8 + rule3 * 1.3
+#         denominator = rule1 + rule2 + rule3 + 1e-8
+#         adaptive_factor = numerator / denominator
+
+#         # Apply strength (makes fuzzy very gentle at the beginning)
+#         adaptive_factor = 1.0 + self.strength * (adaptive_factor - 1.0)
+#         #adaptive_factor = torch.clamp(adaptive_factor, 0.4, 1.5)
+
+#         # === DEBUG PRINTS (every 200 steps) ===
+#         self.debug_counter += 1
+#         if self.debug_counter % 200 == 0:
+#             print(f"[Fuzzy Debug] tilt_error={tilt_error.mean().item():.3f} | "
+#                   f"vel_error={vel_error.mean().item():.3f} | "
+#                   f"adaptive_factor={adaptive_factor.mean().item():.3f}")
+
+#         return torch.clamp(adaptive_factor, 0.4, 1.5)
+
+
+# Fuzzy Logic 2
 class SimpleFuzzyTiltPenalty:
-    """Simple fuzzy logic for adaptive tilt penalty."""
+    """Fuzzy logic that prioritizes stabilization first (upright the drone)."""
 
     def __init__(self, device):
         self.device = device
         self.debug_counter = 0
-        self.strength = 0.3     # Start very soft (0.0 = no fuzzy, 1.0 = full fuzzy)
 
     def _tri_mf(self, x, a, b, c):
         """Triangle membership function."""
         return torch.clamp(torch.min((x - a) / (b - a), (c - x) / (c - b)), 0.0, 1.0)
 
     def compute(self, tilt_error: torch.Tensor, vel_error: torch.Tensor) -> torch.Tensor:
-        """Return adaptive multiplier for tilt penalty (0.3 = lenient, 2.0 = strict)."""
+        """
+        Returns adaptive multiplier for tilt penalty.
+        High tilt → strong penalty (stabilize first).
+        Low tilt → normal penalty (allow tracking).
+        """
         # Tilt error memberships
-        tilt_low = self._tri_mf(tilt_error, 0.0, 0.0, 0.4)
-        tilt_med = self._tri_mf(tilt_error, 0.2, 0.5, 0.8)
-        tilt_high = self._tri_mf(tilt_error, 0.6, 1.0, 1.0)
+        tilt_very_high = self._tri_mf(tilt_error, 0.6, 0.9, 1.0)   # > 60° tilt
+        tilt_high = self._tri_mf(tilt_error, 0.3, 0.6, 0.9)
+        tilt_low = self._tri_mf(tilt_error, 0.0, 0.2, 0.4)
 
-        # Velocity error memberships
+        # Velocity error (used only when tilt is low)
         vel_low = self._tri_mf(vel_error, 0.0, 0.0, 0.6)
-        vel_med = self._tri_mf(vel_error, 0.3, 0.8, 1.3)
-        vel_high = self._tri_mf(vel_error, 1.0, 1.5, 2.0)
 
-        # Fuzzy rules (Mamdani)
-        rule1 = torch.min(tilt_low, vel_low)      # Very lenient
-        rule2 = torch.min(tilt_med, vel_med)
-        rule3 = torch.min(tilt_high, vel_high)    # Strict
+        # Rules (Stabilization-first)
+        rule_stabilize = tilt_very_high                     # Very strong penalty when highly tilted
+        rule_moderate = torch.min(tilt_high, vel_low)       # Moderate when somewhat tilted
+        rule_track = tilt_low                               # Normal when almost upright
 
-        # # Output fuzzy sets
-        # out_low = rule1 * 0.5
-        # out_med = rule2 * 0.9
-        # out_high = rule3 * 1.4
+        # Defuzzify (weighted)
+        numerator = rule_stabilize * 2.2 + rule_moderate * 1.2 + rule_track * 0.6
+        denominator = rule_stabilize + rule_moderate + rule_track + 1e-8
 
-        # # Defuzzify (centroid approximation)
-        # numerator = out_low * 0.5 + out_med * 0.9 + out_high * 1.4
-        # denominator = out_low + out_med + out_high + 1e-8
-        # adaptive_factor = numerator / denominator
-
-        numerator = rule1 * 0.4 + rule2 * 0.8 + rule3 * 1.3
-        denominator = rule1 + rule2 + rule3 + 1e-8
         adaptive_factor = numerator / denominator
 
-        # Apply strength (makes fuzzy very gentle at the beginning)
-        adaptive_factor = 1.0 + self.strength * (adaptive_factor - 1.0)
-        #adaptive_factor = torch.clamp(adaptive_factor, 0.4, 1.5)
-
-        # === DEBUG PRINTS (every 200 steps) ===
+        # Debug print every 200 steps
         self.debug_counter += 1
         if self.debug_counter % 200 == 0:
-            print(f"[Fuzzy Debug] tilt_error={tilt_error.mean().item():.3f} | "
-                  f"vel_error={vel_error.mean().item():.3f} | "
-                  f"adaptive_factor={adaptive_factor.mean().item():.3f}")
+            print(f"[Fuzzy Debug] tilt={tilt_error.mean().item():.3f} | "
+                  f"vel={vel_error.mean().item():.3f} | "
+                  f"factor={adaptive_factor.mean().item():.3f} (higher = stronger penalty)")
 
-        return torch.clamp(adaptive_factor, 0.4, 1.5)
+        return torch.clamp(adaptive_factor, 0.6, 2.5)   # 0.6 = lenient, 2.5 = very strong penalty
     
 class QuadcopterEnvWindow(BaseEnvWindow):
     """Window manager for the Quadcopter environment."""
@@ -178,13 +226,13 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     moment_scale = 0.01
 
     # reward scales
-    lin_vel_reward_scale = -0.02     
-    ang_vel_reward_scale = -0.015
-    distance_to_goal_reward_scale = 35.0
+    lin_vel_reward_scale = -0.2     
+    ang_vel_reward_scale = -0.05
+    distance_to_goal_reward_scale = 25.0
     
     # Penalizes the drone for being tilted (not horizontal).
     # More negative = stronger penalty.
-    tilt_penalty_scale: float = -0.5
+    tilt_penalty_scale: float = -1.0
 
 
 class QuadcopterEnv(DirectRLEnv):
@@ -219,6 +267,11 @@ class QuadcopterEnv(DirectRLEnv):
 
         #fuzzy Logic
         self.fuzzy_tilt = SimpleFuzzyTiltPenalty(self.device)
+        # === Data Collection for 3D Histogram Plotting ===
+        self.tilt_history = []      # will store mean tilt_error
+        self.vel_history = []       # will store mean vel_error
+        self.fuzzy_history = []     # will store mean adaptive_factor
+        self.save_frequency = 500   # save every 500 steps (adjust if needed)
         self.fuzzy_strength_curriculum = 0.3   # start low
 
         # Logging
@@ -489,17 +542,17 @@ class QuadcopterEnv(DirectRLEnv):
         distance_to_goal = torch.linalg.norm(self._desired_pos_w - self._robot.data.root_pos_w, dim=1)
         distance_to_goal_mapped = 1 - torch.tanh(distance_to_goal / 0.8)
 
-        # --- Fuzzy Adaptive Tilt Penalty ---
+        # Tilt calculation
         local_up_vec = torch.tensor([0.0, 0.0, 1.0], device=self.device).expand(self.num_envs, 3)
         robot_up_vec_w = math_utils.quat_apply(self._robot.data.root_quat_w, local_up_vec)
-        tilt_error = 1.0 - robot_up_vec_w[:, 2] # 0 = upright, 1 = 90°
+        tilt_error = 1.0 - robot_up_vec_w[:, 2]
 
-        vel_error = torch.norm(self._robot.data.root_lin_vel_b, dim=1) / 3.0   # normalized
+        vel_error = torch.norm(self._robot.data.root_lin_vel_b, dim=1) / 3.0
 
-        #Fuzzy Adaptive Filter
-        adaptive_tilt_factor = self.fuzzy_tilt.compute(tilt_error, vel_error)
+        # Fuzzy logic (stabilize first)
+        adaptive_factor = self.fuzzy_tilt.compute(tilt_error, vel_error)
 
-        tilt_penalty = tilt_error * self.cfg.tilt_penalty_scale * adaptive_tilt_factor
+        tilt_penalty = tilt_error * self.cfg.tilt_penalty_scale * adaptive_factor
 
         rewards = {
             "lin_vel": lin_vel * self.cfg.lin_vel_reward_scale * self.step_dt,
@@ -508,16 +561,21 @@ class QuadcopterEnv(DirectRLEnv):
             "tilt_penalty": tilt_penalty * self.step_dt,
         }
 
+        # === Collect data for 3D histogram (mean across all envs) ===
+        self.tilt_history.append(tilt_error.mean().item())
+        self.vel_history.append(vel_error.mean().item())
+        self.fuzzy_history.append(adaptive_factor.mean().item())
+
+        # Auto-save every N steps to avoid memory explosion
+        if len(self.tilt_history) % self.save_frequency == 0:
+            self._save_fuzzy_data()
+        
         reward = torch.sum(torch.stack(list(rewards.values())), dim=0)
 
-        reward = torch.clamp(reward, -15.0, 40.0)  # Prevent extreme values
-        reward[self.reset_terminated] -= 10.0
+        # Safety
+        reward = torch.clamp(reward, -15.0, 40.0)
+        reward[self.reset_terminated] -= 12.0
 
-        # # Extra penalty when drone dies (prevents policy from learning to crash)
-        # died_mask = self.reset_terminated
-        # reward[died_mask] -= 10.0
-
-        # Logging
         for key, value in rewards.items():
             self._episode_sums[key] += value
 
@@ -809,6 +867,33 @@ class QuadcopterEnv(DirectRLEnv):
         else:
             if hasattr(self, "goal_pos_visualizer"):
                 self.goal_pos_visualizer.set_visibility(False)
+
+    def _save_fuzzy_data(self):
+        """Save collected fuzzy data to .npy file"""
+        import os
+        import numpy as np
+        from datetime import datetime
+
+        save_dir = "logs/fuzzy_data"
+        os.makedirs(save_dir, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+        data = {
+            "tilt_error": np.array(self.tilt_history),
+            "vel_error": np.array(self.vel_history),
+            "adaptive_factor": np.array(self.fuzzy_history),
+        }
+
+        filename = os.path.join(save_dir, f"fuzzy_data_{timestamp}.npy")
+        np.save(filename, data)
+
+        print(f"[Fuzzy Data] Saved {len(self.tilt_history)} samples → {filename}")
+
+        # Optional: clear buffers to save memory (uncomment if training is very long)
+        # self.tilt_history.clear()
+        # self.vel_history.clear()
+        # self.fuzzy_history.clear()
 
     def _debug_vis_callback(self, event):
         # update the markers
