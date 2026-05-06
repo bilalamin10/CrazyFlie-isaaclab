@@ -24,8 +24,8 @@ class QuadcopterPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     # Policy Network Configuration
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0,
-        actor_hidden_dims=[64, 64],
-        critic_hidden_dims=[64, 64],
+        actor_hidden_dims=[256, 128],
+        critic_hidden_dims=[256, 128],
         activation="elu",
     )
 
@@ -34,10 +34,10 @@ class QuadcopterPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
         clip_param=0.2,
-        entropy_coef=0.00,          # small entropy for better exploration
+        entropy_coef=0.005,          # small entropy for better exploration
         num_learning_epochs=5,
         num_mini_batches=4,
-        learning_rate=5e-4,
+        learning_rate=3e-4,
         schedule="adaptive",
         gamma=0.99,
         lam=0.95,

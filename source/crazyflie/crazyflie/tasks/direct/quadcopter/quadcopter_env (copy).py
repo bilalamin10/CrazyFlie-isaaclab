@@ -507,8 +507,7 @@ class QuadcopterEnv(DirectRLEnv):
 
         # --- 3. DERIVED STATES ---
         gravity_vec_w = torch.tensor([0.0, 0.0, -1.0], device=self.device).expand(self.num_envs, 3)
-        proj_grav_b = math_utils.quat_rotate_inverse(quat_w, gravity_vec_w)
-        #proj_grav_b = math_utils.quat_apply_inverse(quat_w, gravity_vec_w) # Result is in Body Frame
+        proj_grav_b = math_utils.quat_apply_inverse(quat_w, gravity_vec_w) # Result is in Body Frame
 
         desired_pos_b, _ = subtract_frame_transforms(
             pos_w, quat_w, self._desired_pos_w

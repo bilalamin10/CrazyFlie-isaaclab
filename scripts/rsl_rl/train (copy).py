@@ -10,13 +10,11 @@
 import argparse
 import sys
 
-#import crazyflie.tasks.direct.quadcopter.quadcopter_env
-#print("Using quadcopter_env from:", crazyflie.tasks.direct.quadcopter.quadcopter_env.__file__)
-
 from isaaclab.app import AppLauncher
 
 # local imports
 import cli_args  # isort: skip
+
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
@@ -101,17 +99,6 @@ torch.backends.cudnn.allow_tf32 = True
 torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = False
 
-# ==================== DEBUG: CHECK WHICH ENV FILE IS USED ====================
-import crazyflie.tasks.direct.quadcopter.quadcopter_env as custom_env
-print("="*80)
-print("DEBUG: Using CUSTOM quadcopter_env.py from:")
-print(custom_env.__file__)
-print("="*80)
-
-# Also check if Hydra is using a different one
-import isaaclab_tasks
-print("Isaac Lab tasks path:", isaaclab_tasks.__file__)
-# ============================================================================
 
 @hydra_task_config(args_cli.task, "rsl_rl_cfg_entry_point")
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlOnPolicyRunnerCfg):
