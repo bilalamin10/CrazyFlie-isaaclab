@@ -26,7 +26,7 @@ from isaaclab.utils import math as math_utils
 from isaaclab_assets import CRAZYFLIE_CFG  # isort: skip
 from isaaclab.markers import CUBOID_MARKER_CFG  # isort: skip
 
-from .quadcopter_env import QuadcopterEnvCfg
+from .quadcopter_env_cfg import QuadcopterEnvCfg
 
 @configclass
 class QuadcopterDoaminRandCfg(QuadcopterEnvCfg):

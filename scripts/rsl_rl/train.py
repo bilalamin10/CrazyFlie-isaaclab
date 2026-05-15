@@ -123,6 +123,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if not hasattr(agent_cfg, "obs_groups") or agent_cfg.obs_groups is None:
         agent_cfg.obs_groups = {"policy": ["obs"]}
 
+    # Override agent cfg with CLI flags if provided
+    if args_cli.experiment_name is not None:
+        agent_cfg.experiment_name = args_cli.experiment_name
+    if args_cli.run_name is not None:
+        agent_cfg.run_name = args_cli.run_name
+
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
     agent_cfg.max_iterations = (
         args_cli.max_iterations if args_cli.max_iterations is not None else agent_cfg.max_iterations

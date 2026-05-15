@@ -4,133 +4,21 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from __future__ import annotations
-
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .quadcopter_env_cfg import QuadcopterEnvCfg
+from asyncio import log
 import gymnasium as gym
 import torch
-
-import isaaclab.sim as sim_utils
-from isaaclab.assets import Articulation, ArticulationCfg
-from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg
 from isaaclab.envs.ui import BaseEnvWindow
 from isaaclab.markers import VisualizationMarkers
-from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sim import SimulationCfg
-from isaaclab.terrains import TerrainImporterCfg
-from isaaclab.utils import configclass
 from isaaclab.utils.math import subtract_frame_transforms
 from isaaclab.utils import math as math_utils
-
-##
-# Pre-defined configs
-##
-from isaaclab_assets import CRAZYFLIE_CFG  # isort: skip
 from isaaclab.markers import CUBOID_MARKER_CFG  # isort: skip
+from isaaclab.assets import Articulation
+from isaaclab.envs import DirectRLEnv
+import isaaclab.sim as sim_utils
 
-# # fuzzy class implementation logic 1
-
-# class SimpleFuzzyTiltPenalty:
-#     """Simple fuzzy logic for adaptive tilt penalty."""
-
-#     def __init__(self, device):
-#         self.device = device
-#         self.debug_counter = 0
-#         self.strength = 0.3     # Start very soft (0.0 = no fuzzy, 1.0 = full fuzzy)
-
-#     def _tri_mf(self, x, a, b, c):
-#         """Triangle membership function."""
-#         return torch.clamp(torch.min((x - a) / (b - a), (c - x) / (c - b)), 0.0, 1.0)
-
-#     def compute(self, tilt_error: torch.Tensor, vel_error: torch.Tensor) -> torch.Tensor:
-#         """Return adaptive multiplier for tilt penalty (0.3 = lenient, 2.0 = strict)."""
-#         # Tilt error memberships
-#         tilt_low = self._tri_mf(tilt_error, 0.0, 0.0, 0.4)
-#         tilt_med = self._tri_mf(tilt_error, 0.2, 0.5, 0.8)
-#         tilt_high = self._tri_mf(tilt_error, 0.6, 1.0, 1.0)
-
-#         # Velocity error memberships
-#         vel_low = self._tri_mf(vel_error, 0.0, 0.0, 0.6)
-#         vel_med = self._tri_mf(vel_error, 0.3, 0.8, 1.3)
-#         vel_high = self._tri_mf(vel_error, 1.0, 1.5, 2.0)
-
-#         # Fuzzy rules (Mamdani)
-#         rule1 = torch.min(tilt_low, vel_low)      # Very lenient
-#         rule2 = torch.min(tilt_med, vel_med)
-#         rule3 = torch.min(tilt_high, vel_high)    # Strict
-
-#         # # Output fuzzy sets
-#         # out_low = rule1 * 0.5
-#         # out_med = rule2 * 0.9
-#         # out_high = rule3 * 1.4
-
-#         # # Defuzzify (centroid approximation)
-#         # numerator = out_low * 0.5 + out_med * 0.9 + out_high * 1.4
-#         # denominator = out_low + out_med + out_high + 1e-8
-#         # adaptive_factor = numerator / denominator
-
-#         numerator = rule1 * 0.4 + rule2 * 0.8 + rule3 * 1.3
-#         denominator = rule1 + rule2 + rule3 + 1e-8
-#         adaptive_factor = numerator / denominator
-
-#         # Apply strength (makes fuzzy very gentle at the beginning)
-#         adaptive_factor = 1.0 + self.strength * (adaptive_factor - 1.0)
-#         #adaptive_factor = torch.clamp(adaptive_factor, 0.4, 1.5)
-
-#         # === DEBUG PRINTS (every 200 steps) ===
-#         self.debug_counter += 1
-#         if self.debug_counter % 200 == 0:
-#             print(f"[Fuzzy Debug] tilt_error={tilt_error.mean().item():.3f} | "
-#                   f"vel_error={vel_error.mean().item():.3f} | "
-#                   f"adaptive_factor={adaptive_factor.mean().item():.3f}")
-
-#         return torch.clamp(adaptive_factor, 0.4, 1.5)
-
-
-# # Fuzzy Logic 2
-# class SimpleFuzzyTiltPenalty:
-#     """Fuzzy logic that prioritizes stabilization first (upright the drone)."""
-
-#     def __init__(self, device):
-#         self.device = device
-#         self.debug_counter = 0
-
-#     def _tri_mf(self, x, a, b, c):
-#         """Triangle membership function."""
-#         return torch.clamp(torch.min((x - a) / (b - a), (c - x) / (c - b)), 0.0, 1.0)
-
-#     def compute(self, tilt_error: torch.Tensor, vel_error: torch.Tensor) -> torch.Tensor:
-#         """
-#         Returns adaptive multiplier for tilt penalty.
-#         High tilt → strong penalty (stabilize first).
-#         Low tilt → normal penalty (allow tracking).
-#         """
-#         # Tilt error memberships
-#         tilt_very_high = self._tri_mf(tilt_error, 0.6, 0.9, 1.0)   # > 60° tilt
-#         tilt_high = self._tri_mf(tilt_error, 0.3, 0.6, 0.9)
-#         tilt_low = self._tri_mf(tilt_error, 0.0, 0.2, 0.4)
-
-#         # Velocity error (used only when tilt is low)
-#         vel_low = self._tri_mf(vel_error, 0.0, 0.0, 0.6)
-
-#         # Rules (Stabilization-first)
-#         rule_stabilize = tilt_very_high                     # Very strong penalty when highly tilted
-#         rule_moderate = torch.min(tilt_high, vel_low)       # Moderate when somewhat tilted
-#         rule_track = tilt_low                               # Normal when almost upright
-
-#         # Defuzzify (weighted)
-#         numerator = rule_stabilize * 2.2 + rule_moderate * 1.2 + rule_track * 0.6
-#         denominator = rule_stabilize + rule_moderate + rule_track + 1e-8
-
-#         adaptive_factor = numerator / denominator
-
-#         # Debug print every 200 steps
-#         self.debug_counter += 1
-#         if self.debug_counter % 200 == 0:
-#             print(f"[Fuzzy Debug] tilt={tilt_error.mean().item():.3f} | "
-#                   f"vel={vel_error.mean().item():.3f} | "
-#                   f"factor={adaptive_factor.mean().item():.3f} (higher = stronger penalty)")
-
-#         return torch.clamp(adaptive_factor, 0.6, 2.5)   # 0.6 = lenient, 2.5 = very strong penalty
-    
 class QuadcopterEnvWindow(BaseEnvWindow):
     """Window manager for the Quadcopter environment."""
 
@@ -151,128 +39,31 @@ class QuadcopterEnvWindow(BaseEnvWindow):
                     self._create_debug_vis_ui_element("targets", self.env)
 
 
-@configclass
-class QuadcopterEnvCfg(DirectRLEnvCfg):
-    # env
-    episode_length_s = 20.0
-    decimation = 2
-    action_space = 4
-    observation_space = 16
-    state_space = 0
-    debug_vis = True
-
-    # initial tilt in rads
-    initial_rotation_range: tuple[float, float] = (-3.14, 3.14) # approx +/- 180 degrees
-    # noise parameters
-    noise_lin_vel: float = 0.05  # e.g., +/- 0.05 m/s (Optical Flow/GPS noise)
-    noise_ang_vel: float = 0.02  # e.g., +/- 0.02 rad/s (Gyroscope noise)
-    noise_pos: float = 0.1      # e.g., +/- 1 cm (Mocap/GPS noise)
-    noise_quat: float = 0.1     # Orientation noise (IMU filter error)
-
-    # New: curriculum for static goals
-    static_goal_curriculum: bool = True
-    static_goal_min_dist: float = 0.5     # start easy
-    static_goal_max_dist: float = 4.0     # target difficulty
-    #static_goal_curriculum_timesteps: int = 20_000_000  # when to reach max
-
-    # Trajectory Settings
-    # Options: "lemniscate" (Figure-8), "circle", "lissajous" (Random knots)
-    #trajectory_type: str = "lemniscate"
-    #trajectory_type: str = "static"
-
-    # --- Trajectory Parameters ---
-    trajectory_type: str = "static" # Options: "static", "circle"
-    trajectory_radius: float = 2  # Radius of the circle in meters
-    trajectory_speed: float = 0.5   # Speed in radians/second (approx 0.75 m/s)
-    trajectory_z_height: float = 1.5 # Height to fly at
-
-    ui_window_class_type = QuadcopterEnvWindow
-
-
-    # simulation
-    sim: SimulationCfg = SimulationCfg(
-        dt=1 / 120,
-        render_interval=decimation,
-        physics_material=sim_utils.RigidBodyMaterialCfg(
-            friction_combine_mode="multiply",
-            restitution_combine_mode="multiply",
-            static_friction=1.0,
-            dynamic_friction=1.0,
-            restitution=0.0,
-        ),
-    )
-    terrain = TerrainImporterCfg(
-        prim_path="/World/ground",
-        terrain_type="plane",
-        collision_group=-1,
-        physics_material=sim_utils.RigidBodyMaterialCfg(
-            friction_combine_mode="multiply",
-            restitution_combine_mode="multiply",
-            static_friction=1.0,
-            dynamic_friction=1.0,
-            restitution=0.0,
-        ),
-        debug_vis=False,
-    )
-
-    # scene
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(
-        num_envs=4096, env_spacing=2.5, replicate_physics=True, #clone_in_fabric=True
-    )
-
-    # robot
-    robot: ArticulationCfg = CRAZYFLIE_CFG.replace(prim_path="/World/envs/env_.*/Robot")
-    thrust_to_weight = 3.0
-    moment_scale = 0.01
-
-    # reward scales
-    lin_vel_reward_scale = -0.2     
-    ang_vel_reward_scale = -0.05
-    distance_to_goal_reward_scale = 35.0
-    
-    # Penalizes the drone for being tilted (not horizontal).
-    # More negative = stronger penalty.
-    tilt_penalty_scale: float = -0.5
-
-
 class QuadcopterEnv(DirectRLEnv):
     cfg: QuadcopterEnvCfg
 
     def __init__(self, cfg: QuadcopterEnvCfg, render_mode: str | None = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
 
+        from .trajectories import TRAJECTORY_REGISTRY
+        from .curriculum.goal_distance import GoalDistanceCurriculum
+
+        self._trajectory = TRAJECTORY_REGISTRY[cfg.trajectory_type](
+            cfg, self.num_envs, self.device
+        )
+        self._curriculum = GoalDistanceCurriculum(cfg, self.num_envs, self.device)
+
         # Total thrust and moment applied to the base of the quadcopter
         self._actions = torch.zeros(self.num_envs, gym.spaces.flatdim(self.single_action_space), device=self.device)
         
         self._thrust = torch.zeros(self.num_envs, 1, 3, device=self.device)
         self._moment = torch.zeros(self.num_envs, 1, 3, device=self.device)
-        self._traj_phase_offset = torch.zeros(self.num_envs, device=self.device)
+
         # --- New: Add local up vector for tilt calculation ---
         #self._local_up_vec = torch.tensor([0.0, 0.0, 1.0], device=self.device)
 
         # Goal position
         self._desired_pos_w = torch.zeros(self.num_envs, 3, device=self.device)
-
-        #Goal position offset
-        self.fixed_goal_offset_x = torch.zeros(self.num_envs, device=self.device)
-        self.fixed_goal_offset_y = torch.zeros(self.num_envs, device=self.device)
-
-        self.current_max_goal_dist = torch.full((self.num_envs,), self.cfg.static_goal_min_dist, device=self.device)
-        #self.global_progress = 0.0  # we'll update this from runner or approximate
-        
-        #self.curriculum_iteration = 0
-        self.curriculum_counter = 0
-        #self.max_curriculum_steps = 15_000_000  # ← tune this! (e.g. when you want full difficulty)
-        #self.curriculum_update_freq = 50               # Update every N physics steps (to reduce overhead)
-
-        # #fuzzy Logic
-        # self.fuzzy_tilt = SimpleFuzzyTiltPenalty(self.device)
-        # # === Data Collection for 3D Histogram Plotting ===
-        # self.tilt_history = []      # will store mean tilt_error
-        # self.vel_history = []       # will store mean vel_error
-        # self.fuzzy_history = []     # will store mean adaptive_factor
-        # self.save_frequency = 500   # save every 500 steps (adjust if needed)
-        # self.fuzzy_strength_curriculum = 0.3   # start low
 
         # Logging
         self._episode_sums = {
@@ -294,12 +85,6 @@ class QuadcopterEnv(DirectRLEnv):
         # add handle for debug visualization (this is set to a valid handle inside set_debug_vis)
         self.set_debug_vis(self.cfg.debug_vis)
         
-    # def update_fuzzy_strength(self):
-    #     # Ramp strength slowly with curriculum
-    #     progress = min(1.0, self.curriculum_counter / 5_000_000)   # adjust number as needed
-    #     self.fuzzy_tilt.strength = 0.3 + progress * 0.7   # from 0.3 → 1.0
-    #     #self.fuzzy_tilt = SimpleFuzzyTiltPenalty(self.device)
-
     def _setup_scene(self):
         self._robot = Articulation(self.cfg.robot)
         self.scene.articulations["robot"] = self._robot
@@ -316,173 +101,29 @@ class QuadcopterEnv(DirectRLEnv):
         light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
         light_cfg.func("/World/Light", light_cfg)
 
-
-    #   Circle
-    # def _pre_physics_step(self, actions: torch.Tensor):
-    #     # --- UPDATE TRAJECTORY TARGET ---
-    #     # Calculate current time (t) for each env
-    #     # episode_length_buf gives steps. Multiply by dt to get seconds.
-    #     current_time = self.episode_length_buf * self.step_dt
-        
-    #     # Calculate the angle: theta = speed * time + offset
-    #     speed = self.cfg.trajectory_speed
-    #     radius = self.cfg.trajectory_radius
-        
-    #     # Vectorized calculation for all 4096 envs
-    #     theta = (current_time * speed) + self._traj_phase_offset
-        
-    #     # 1. Calculate Circle Offsets
-    #     target_x = radius * torch.cos(theta)
-    #     target_y = radius * torch.sin(theta)
-    #     target_z = self.cfg.trajectory_z_height
-
-    #     # 2. Apply to Global Coordinates (Add Environment Origins!)
-    #     # Note: We update ALL indices every step.
-    #     self._desired_pos_w[:, 0] = target_x + self._terrain.env_origins[:, 0]
-    #     self._desired_pos_w[:, 1] = target_y + self._terrain.env_origins[:, 1]
-    #     self._desired_pos_w[:, 2] = target_z
-
-
-    #     self._actions = actions.clone().clamp(-1.0, 1.0)
-    #     self._thrust[:, 0, 2] = self.cfg.thrust_to_weight * self._robot_weight * (self._actions[:, 0] + 1.0) / 2.0
-    #     self._moment[:, 0, :] = self.cfg.moment_scale * self._actions[:, 1:]
-
-
-    # Lemniscate
-    # def _pre_physics_step(self, actions: torch.Tensor):
-    #     # --- 1. UPDATE TRAJECTORY TARGET (Lemniscate) ---
-    #     # Calculate current time (t) for each env
-    #     # We use the episode length buffer to get the time elapsed in simulation
-    #     current_time = self.episode_length_buf * self.step_dt
-        
-    #     speed = self.cfg.trajectory_speed
-    #     radius = self.cfg.trajectory_radius
-        
-    #     # Calculate the phase angle theta based on time and random offset
-    #     # theta shape: (num_envs,)
-    #     theta = (current_time * speed) + self._traj_phase_offset
-        
-    #     # --- Lemniscate Math ---
-    #     # parametric equations:
-    #     # x = (r * cos(theta)) / (1 + sin^2(theta))
-    #     # y = (r * sin(theta) * cos(theta)) / (1 + sin^2(theta))
-        
-    #     sin_theta = torch.sin(theta)
-    #     cos_theta = torch.cos(theta)
-    #     # Denominator: 1 + sin^2(theta)
-    #     denominator = 1 + torch.square(sin_theta)
-        
-    #     # Calculate Offsets
-    #     target_x = (radius * cos_theta) / denominator
-    #     target_y = (radius * sin_theta * cos_theta) / denominator
-    #     target_z = self.cfg.trajectory_z_height
-
-    #     # Apply to Global Coordinates (Add Environment Origins)
-    #     self._desired_pos_w[:, 0] = target_x + self._terrain.env_origins[:, 0]
-    #     self._desired_pos_w[:, 1] = target_y + self._terrain.env_origins[:, 1]
-    #     self._desired_pos_w[:, 2] = target_z
-
-    #     # --- 2. ACTIONS & PHYSICS ---
-    #     # Clamp actions to [-1, 1]
-    #     self._actions = actions.clone().clamp(-1.0, 1.0)
-        
-    #     # Convert Network Output to Physics Forces
-    #     # Map [-1, 1] action to [0, Max Thrust]
-    #     # Note: We use the randomized thrust scale if you implemented DR there, 
-    #     # otherwise use self.cfg.thrust_to_weight * self._robot_weight
-        
-    #     # Standard (Non-DR) version:
-    #     total_thrust = self.cfg.thrust_to_weight * self._robot_weight * (self._actions[:, 0] + 1.0) / 2.0
-        
-    #     # Apply to thrust buffer (Z-axis only for simple model)
-    #     self._thrust[:, 0, 2] = total_thrust
-        
-    #     # Map action to Torques
-    #     self._moment[:, 0, :] = self.cfg.moment_scale * self._actions[:, 1:]
-
     def _pre_physics_step(self, actions: torch.Tensor):
-        # --- UPDATE TRAJECTORY TARGET ---
-        current_time = self.episode_length_buf * self.step_dt
-        speed = self.cfg.trajectory_speed
-        radius = self.cfg.trajectory_radius
+        self._actions = actions.clone().clamp(-1.0, 1.0)
         
-        # Calculate phase angle
-        theta = (current_time * speed) + self._traj_phase_offset
-        
-        # Initialize target variables
-        target_x = torch.zeros_like(theta)
-        target_y = torch.zeros_like(theta)
-
         # --- SHAPE LOGIC SWITCH ---
-        if self.cfg.trajectory_type == "circle":
-            # Simple Circle
-            target_x = radius * torch.cos(theta)
-            target_y = radius * torch.sin(theta)
-
-        elif self.cfg.trajectory_type == "lemniscate":
-            # Figure-8 (Your current training shape)
-            sin_theta = torch.sin(theta)
-            cos_theta = torch.cos(theta)
-            denom = 1 + torch.square(sin_theta)
-            target_x = (radius * cos_theta) / denom
-            target_y = (radius * sin_theta * cos_theta) / denom
-
-        elif self.cfg.trajectory_type == "lissajous":
-            # Complex Knot / Random-looking path
-            # x = A sin(a*t + d), y = B sin(b*t)
-            target_x = radius * torch.sin(3 * theta)
-            target_y = radius * torch.sin(2 * theta)
-
-        elif self.cfg.trajectory_type == "static":
-            target_x = self.fixed_goal_offset_x
-            target_y = self.fixed_goal_offset_y
-
-        # --- Apply to Global Coordinates ---
-        self._desired_pos_w[:, 0] = target_x + self._terrain.env_origins[:, 0]
-        self._desired_pos_w[:, 1] = target_y + self._terrain.env_origins[:, 1]
-        self._desired_pos_w[:, 2] = self.cfg.trajectory_z_height
+        t = self.episode_length_buf * self.step_dt
+        tx, ty = self._trajectory.get_target_xy(t)
+        self._desired_pos_w[:, 0] = tx + self._terrain.env_origins[:, 0]
+        self._desired_pos_w[:, 1] = ty + self._terrain.env_origins[:, 1]
+        self._desired_pos_w[:, 2] = self._trajectory.get_target_z()
 
         # --- 2. ACTIONS & PHYSICS ---
         # Clamp actions to [-1, 1]
-        self._actions = actions.clone().clamp(-1.0, 1.0)
         #print(self._actions[0]) # to print the actions values [1,2,3,4]
-        
-        # Convert Network Output to Physics Forces
-        # Map [-1, 1] action to [0, Max Thrust]
-        # Note: We use the randomized thrust scale if you implemented DR there, 
-        # otherwise use self.cfg.thrust_to_weight * self._robot_weight
-        
+           
         # Standard (Non-DR) version:
         total_thrust = self.cfg.thrust_to_weight * self._robot_weight * (self._actions[:, 0] + 1.0) / 2.0
-        
         # Apply to thrust buffer (Z-axis only for simple model)
         self._thrust[:, 0, 2] = total_thrust
-        
         # Map action to Torques
         self._moment[:, 0, :] = self.cfg.moment_scale * self._actions[:, 1:]
-        self._maybe_update_curriculum()
-
-
 
     def _apply_action(self):
         self._robot.set_external_force_and_torque(self._thrust, self._moment, body_ids=self._body_id)
-
-    # def _get_observations(self) -> dict:
-    #     desired_pos_b, _ = subtract_frame_transforms(
-    #         self._robot.data.root_pos_w, self._robot.data.root_quat_w, self._desired_pos_w
-    #     )
-    #     obs = torch.cat(
-    #         [
-    #             self._robot.data.root_lin_vel_b,        # 3-dim
-    #             self._robot.data.root_ang_vel_b,        # 3-dim
-    #             self._robot.data.root_quat_w,           # 4-dim
-    #             self._robot.data.projected_gravity_b,   #3-dim
-    #             desired_pos_b,                          # 3-dim
-    #         ],
-    #         dim=-1,
-    #     )
-    #     observations = {"policy": obs}
-    #     return observations
 
     def _get_observations(self) -> dict:
         # --- 1. GET GROUND TRUTH (Use _b suffix for clarity) ---
@@ -492,17 +133,17 @@ class QuadcopterEnv(DirectRLEnv):
         quat_w = self._robot.data.root_quat_w.clone()
 
         # --- 2. APPLY NOISE ---
-        if self.cfg.noise_lin_vel > 0.0:
+        if self.cfg.noise_lin_vel > 0.0 and not self.cfg.eval_mode:
             lin_vel_b += torch.randn_like(lin_vel_b) * self.cfg.noise_lin_vel
             
-        if self.cfg.noise_ang_vel > 0.0:
+        if self.cfg.noise_ang_vel > 0.0 and not self.cfg.eval_mode:
             ang_vel_b += torch.randn_like(ang_vel_b) * self.cfg.noise_ang_vel
 
-        if self.cfg.noise_quat > 0.0:
+        if self.cfg.noise_quat > 0.0 and not self.cfg.eval_mode:
             quat_w += torch.randn_like(quat_w) * self.cfg.noise_quat
             quat_w = torch.nn.functional.normalize(quat_w, p=2, dim=-1)
 
-        if self.cfg.noise_pos > 0.0:
+        if self.cfg.noise_pos > 0.0 and not self.cfg.eval_mode:
             pos_w += torch.randn_like(pos_w) * self.cfg.noise_pos
 
         # --- 3. DERIVED STATES ---
@@ -535,53 +176,6 @@ class QuadcopterEnv(DirectRLEnv):
 
         return {"policy": obs}
 
-
-    # # this _get_rewards is with fuzzy logic
-    # def _get_rewards(self) -> torch.Tensor:
-    #     lin_vel = torch.sum(torch.square(self._robot.data.root_lin_vel_b), dim=1)
-    #     ang_vel = torch.sum(torch.square(self._robot.data.root_ang_vel_b), dim=1)
-    #     distance_to_goal = torch.linalg.norm(self._desired_pos_w - self._robot.data.root_pos_w, dim=1)
-    #     distance_to_goal_mapped = 1 - torch.tanh(distance_to_goal / 0.8)
-
-    #     # Tilt calculation
-    #     local_up_vec = torch.tensor([0.0, 0.0, 1.0], device=self.device).expand(self.num_envs, 3)
-    #     robot_up_vec_w = math_utils.quat_apply(self._robot.data.root_quat_w, local_up_vec)
-    #     tilt_error = 1.0 - robot_up_vec_w[:, 2]
-
-    #     vel_error = torch.norm(self._robot.data.root_lin_vel_b, dim=1) / 3.0
-
-    #     # Fuzzy logic (stabilize first)
-    #     adaptive_factor = self.fuzzy_tilt.compute(tilt_error, vel_error)
-
-    #     tilt_penalty = tilt_error * self.cfg.tilt_penalty_scale * adaptive_factor
-
-    #     rewards = {
-    #         "lin_vel": lin_vel * self.cfg.lin_vel_reward_scale * self.step_dt,
-    #         "ang_vel": ang_vel * self.cfg.ang_vel_reward_scale * self.step_dt,
-    #         "distance_to_goal": distance_to_goal_mapped * self.cfg.distance_to_goal_reward_scale * self.step_dt,
-    #         "tilt_penalty": tilt_penalty * self.step_dt,
-    #     }
-
-    #     # === Collect data for 3D histogram (mean across all envs) ===
-    #     self.tilt_history.append(tilt_error.mean().item())
-    #     self.vel_history.append(vel_error.mean().item())
-    #     self.fuzzy_history.append(adaptive_factor.mean().item())
-
-    #     # Auto-save every N steps to avoid memory explosion
-    #     if len(self.tilt_history) % self.save_frequency == 0:
-    #         self._save_fuzzy_data()
-        
-    #     reward = torch.sum(torch.stack(list(rewards.values())), dim=0)
-
-    #     # Safety
-    #     reward = torch.clamp(reward, -15.0, 40.0)
-    #     reward[self.reset_terminated] -= 12.0
-
-    #     for key, value in rewards.items():
-    #         self._episode_sums[key] += value
-
-    #     return reward
-
     #  enable this _get_rewards without fuzzy logic
     def _get_rewards(self) -> torch.Tensor:
         lin_vel = torch.sum(torch.square(self._robot.data.root_lin_vel_b), dim=1)
@@ -612,7 +206,8 @@ class QuadcopterEnv(DirectRLEnv):
         # Logging
         for key, value in rewards.items():
             self._episode_sums[key] += value
-
+        self._log_eval_metrics()
+        
         return reward
     
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
@@ -651,7 +246,8 @@ class QuadcopterEnv(DirectRLEnv):
             self.episode_length_buf = torch.randint_like(self.episode_length_buf, high=int(self.max_episode_length))
 
         self._actions[env_ids] = 0.0
-        # --- 1. LOAD STATE DATA (Do this FIRST) ---
+
+        # --- 1. LOAD STATE DATA ---
         joint_pos = self._robot.data.default_joint_pos[env_ids]
         joint_vel = self._robot.data.default_joint_vel[env_ids]
         default_root_state = self._robot.data.default_root_state[env_ids]
@@ -659,11 +255,14 @@ class QuadcopterEnv(DirectRLEnv):
         # --- 2. APPLY POSITION MODIFIERS ---
         # Apply Terrain Origin
         default_root_state[:, :3] += self._terrain.env_origins[env_ids]
-        # FIX 1: Increase Spawn Height (Add 2.0m to Z)
+        #  Increase Spawn Height (Add 2.0m to Z)
         default_root_state[:, 2] += 2.0
 
         # --- 3. APPLY ROTATION MODIFIERS ---
-        min_rad, max_rad = self.cfg.initial_rotation_range
+        if self.cfg.eval_mode:
+            min_rad, max_rad = self.cfg.eval_initial_rotation_range
+        else:
+            min_rad, max_rad = self.cfg.initial_rotation_range
         
         # Sample random roll, pitch, yaw
         roll = torch.rand(len(env_ids), device=self.device) * (max_rad - min_rad) + min_rad
@@ -678,30 +277,24 @@ class QuadcopterEnv(DirectRLEnv):
         new_quat = math_utils.quat_mul(random_quat, default_quat)
         default_root_state[:, 3:7] = new_quat
 
-        # # --- 4. APPLY VELOCITY MODIFIERS (The Toss) ---
-        # # FIX 2: Add Upward Velocity
-        # toss_vel = 1.0 + torch.rand(len(env_ids), device=self.device) * 2.0
-        
-        # # Clear default linear velocities (indices 7,8,9)
-        # default_root_state[:, 7:10] = 0.0 
-        # # Set upward velocity (index 9 is Z)
-        # default_root_state[:, 9] = toss_vel 
-
         # --- 4. APPLY VELOCITY RANDOMIZATION (The "Throw") ---
-        
-        # Randomize X and Y (Horizontal Velocity)
-        # Range: -1.0 to +1.0 m/s (Simulates a slightly messy throw)
-        default_root_state[:, 7] = torch.rand(len(env_ids), device=self.device) * 2.0 - 1.0 
-        default_root_state[:, 8] = torch.rand(len(env_ids), device=self.device) * 2.0 - 1.0 
-        
-        # Randomize Z (Vertical Velocity)
-        # Range: +2.0 to +4.0 m/s (Strong upward toss to fight gravity)
-        # CRITICAL: This must be positive and strong to allow time for the 180-degree flip.
-        default_root_state[:, 9] = 2.0 + torch.rand(len(env_ids), device=self.device) * 2.0
+        if self.cfg.eval_mode:
+            default_root_state[:, 7:13] = 0.0  # zero linear and angular velocity at spawn
+        else:
+            # Randomize X and Y (Horizontal Velocity)
+            # Range: -1.0 to +1.0 m/s (Simulates a slightly messy throw)
+            default_root_state[:, 7] = torch.rand(len(env_ids), device=self.device) * 2.0 - 1.0 
+            default_root_state[:, 8] = torch.rand(len(env_ids), device=self.device) * 2.0 - 1.0 
+            
+            # Randomize Z (Vertical Velocity)
+            # Range: +2.0 to +4.0 m/s (Strong upward toss to fight gravity)
+            # CRITICAL: This must be positive and strong to allow time for the 180-degree flip.
+            default_root_state[:, 9] = 2.0 + torch.rand(len(env_ids), device=self.device) * 2.0
 
-        # Randomize Angular Velocity (Optional but recommended)
-        # Range: -1.0 to +1.0 rad/s (Simulates a slight spin on release)
-        default_root_state[:, 10:13] = torch.rand(len(env_ids), 3, device=self.device) * 2.0 - 1.0
+            # Randomize Angular Velocity (Optional but recommended)
+            # Range: -1.0 to +1.0 rad/s (Simulates a slight spin on release)
+            default_root_state[:, 10:13] = torch.rand(len(env_ids), 3, device=self.device) * 2.0 - 1.0
+            
         # --- 5. WRITE TO SIMULATOR (Do this ONCE at the end) ---
         # Write Root State (Pose + Velocity)
         self._robot.write_root_pose_to_sim(default_root_state[:, :7], env_ids)
@@ -710,150 +303,19 @@ class QuadcopterEnv(DirectRLEnv):
         # Write Joint State
         self._robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
 
-        # # --- 6. SAMPLE NEW COMMANDS ---
-        # self._desired_pos_w[env_ids, :2] = torch.zeros_like(self._desired_pos_w[env_ids, :2]).uniform_(-2.0, 2.0)
-        # self._desired_pos_w[env_ids, :2] += self._terrain.env_origins[env_ids, :2]
-        # self._desired_pos_w[env_ids, 2] = torch.zeros_like(self._desired_pos_w[env_ids, 2]).uniform_(0.5, 1.5)
+        # --- 6. CURRICULUM (update max dist before sampling new targets) ---
+        log = self._curriculum.step(self._trajectory)
+        if log:
+            self.extras.setdefault("log", {}).update(log)
 
-        # --- 6. SAMPLE TRAJECTORY PARAMETERS ---
-        # Create a random "Phase" (starting angle) for the circle (0 to 2pi)
-        # We store this in a new buffer if you want persistence, 
-        # but for now we can calculate position directly based on episode time.
+        # --- 7. RESET TRAJECTORY AND COMPUTE INITIAL TARGET ---
+        self._trajectory.reset(env_ids)
+        t_zero = torch.zeros(self.num_envs, device=self.device)
+        tx, ty = self._trajectory.get_target_xy(t_zero)
+        self._desired_pos_w[env_ids, 0] = tx[env_ids] + self._terrain.env_origins[env_ids, 0]
+        self._desired_pos_w[env_ids, 1] = ty[env_ids] + self._terrain.env_origins[env_ids, 1]
+        self._desired_pos_w[env_ids, 2] = self._trajectory.get_target_z()
         
-        # For a moving target, we don't set a fixed position here.
-        # We just initialize the logic. The position will be updated in _pre_physics_step.
-        
-        # However, to prevent a huge jump at step 0, let's calculate the t=0 position now.
-        
-        # Define a random starting phase offset for each environment
-        # (Store this as a class variable in __init__ first: self._traj_phase_offset)
-        self._traj_phase_offset[env_ids] = torch.rand(len(env_ids), device=self.device) * 2 * torch.pi
-
-        # Calculate initial target position
-        radius = self.cfg.trajectory_radius
-        theta = self._traj_phase_offset[env_ids] # t=0
-        
-        # Initialize target variables
-        target_x = torch.zeros_like(theta)
-        target_y = torch.zeros_like(theta)
-        
-        # --- SHAPE LOGIC SWITCH (Consistency with Pre-Physics) ---
-        if self.cfg.trajectory_type == "circle":
-            target_x = radius * torch.cos(theta)
-            target_y = radius * torch.sin(theta)
-            
-        elif self.cfg.trajectory_type == "lemniscate":
-            sin_theta = torch.sin(theta)
-            cos_theta = torch.cos(theta)
-            denom = 1 + torch.square(sin_theta)
-            target_x = (radius * cos_theta) / denom
-            target_y = (radius * sin_theta * cos_theta) / denom
-            
-        elif self.cfg.trajectory_type == "lissajous":
-            target_x = radius * torch.sin(3 * theta)
-            target_y = radius * torch.sin(2 * theta)
-            
-        elif self.cfg.trajectory_type == "static":
-            # # Static target at center (or random offset if you prefer)
-            # target_x[:] = 0.0
-            # target_y[:] = 0.0
-            # Random goal in XY (e.g., disk of radius 4m)
-
-            # angle = torch.rand(len(env_ids), device=self.device) * 2 * torch.pi
-            # dist = torch.rand(len(env_ids), device=self.device) * 2.0
-            # target_x = dist * torch.cos(angle)
-            # target_y = dist * torch.sin(angle)
-            # self.fixed_goal_offset_x[env_ids] = target_x
-            # self.fixed_goal_offset_y[env_ids] = target_y
-
-            # Use current curriculum value per env
-            max_d = self.current_max_goal_dist[env_ids]
-
-            angle = torch.rand(len(env_ids), device=self.device) * 2 * torch.pi
-            dist = torch.rand(len(env_ids), device=self.device) * max_d   # 0 to current_max
-
-            target_x = dist * torch.cos(angle)
-            target_y = dist * torch.sin(angle)
-
-            self.fixed_goal_offset_x[env_ids] = target_x
-            self.fixed_goal_offset_y[env_ids] = target_y
-
-        # --- Apply to Global Coordinates ---
-        self._desired_pos_w[env_ids, 0] = target_x + self._terrain.env_origins[env_ids, 0]
-        self._desired_pos_w[env_ids, 1] = target_y + self._terrain.env_origins[env_ids, 1]
-        self._desired_pos_w[env_ids, 2] = self.cfg.trajectory_z_height
-        
-        # # X = Radius * cos(angle) + Env_Origin_X
-        # self._desired_pos_w[env_ids, 0] = radius * torch.cos(angle) + self._terrain.env_origins[env_ids, 0]
-        # # Y = Radius * sin(angle) + Env_Origin_Y
-        # self._desired_pos_w[env_ids, 1] = radius * torch.sin(angle) + self._terrain.env_origins[env_ids, 1]
-        # # Z = Constant Height
-        # self._desired_pos_w[env_ids, 2] = self.cfg.trajectory_z_height
-
-    # def update_curriculum(self, progress: float):
-    #     """progress: 0..1 (total timesteps / total expected timesteps)"""
-    #     if not self.cfg.static_goal_curriculum:
-    #         return
-    #     factor = min(1.0, progress)
-    #     target_dist = self.cfg.static_goal_min_dist + factor * (
-    #         self.cfg.static_goal_max_dist - self.cfg.static_goal_min_dist
-    #     )
-    #     self.current_max_goal_dist[:] = target_dist
-
-    # # New method
-    # def update_curriculum_from_iteration(self, current_iteration: int):
-    #     if not self.cfg.static_goal_curriculum:
-    #         return
-    #     progress = min(1.0, current_iteration / self.max_curriculum_iterations)
-    #     target_dist = (
-    #         self.cfg.static_goal_min_dist +
-    #         progress * (self.cfg.static_goal_max_dist - self.cfg.static_goal_min_dist)
-    #     )
-    #     self.current_max_goal_dist[:] = target_dist
-
-    #     # Optional: log current value so you see it in console/TensorBoard extras
-    #     self.extras["Metrics/curr_max_goal_dist"] = target_dist
-
-    def _maybe_update_curriculum(self):
-    #"""Fast curriculum ramp - tuned for short test runs and real training."""
-        self.curriculum_counter += 1
-
-    # Update every 64 steps (faster response)
-        if self.curriculum_counter % 64 != 0:
-            return
-
-        if not self.cfg.static_goal_curriculum:
-            return
-
-        # Rough estimation: ~120-150 steps per iteration
-        # So 500 iterations ≈ 60,000 - 75,000 steps
-        estimated_iter = self.curriculum_counter // 128
-
-        # === MAIN CHANGE: Reach 4.0m around iteration 480-500 ===
-        progress = min(1.0, estimated_iter / 200.0)
-
-        target_dist = (
-            self.cfg.static_goal_min_dist +
-            progress * (self.cfg.static_goal_max_dist - self.cfg.static_goal_min_dist)
-        )
-
-        self.current_max_goal_dist[:] = target_dist
-
-        # Print progress more frequently so you can see it clearly
-        if estimated_iter % 50 == 0 and estimated_iter > 0:
-            print(
-                f"[Curriculum] Iter ~{estimated_iter:3d} / 500 | "
-                f"progress={progress:.3f} | "
-                f"max_goal_dist = {self.current_max_goal_dist.mean().item():.3f} m"
-            )
-
-        # Log to TensorBoard
-        if "log" not in self.extras:
-            self.extras["log"] = {}
-        self.extras["log"]["Metrics/curr_max_goal_dist"] = target_dist
-
-        #self.update_fuzzy_strength()
-
     def _set_debug_vis_impl(self, debug_vis: bool):
         # create markers if necessary for the first time
         if debug_vis:
@@ -891,11 +353,17 @@ class QuadcopterEnv(DirectRLEnv):
 
         print(f"[Fuzzy Data] Saved {len(self.tilt_history)} samples → {filename}")
 
-        # Optional: clear buffers to save memory (uncomment if training is very long)
-        # self.tilt_history.clear()
-        # self.vel_history.clear()
-        # self.fuzzy_history.clear()
 
     def _debug_vis_callback(self, event):
         # update the markers
         self.goal_pos_visualizer.visualize(self._desired_pos_w)
+
+    def _log_eval_metrics(self):
+        """Per-step tracking metrics logged to extras for eval scraping."""
+        dist = torch.linalg.norm(
+            self._desired_pos_w - self._robot.data.root_pos_w, dim=1
+        )
+        self.extras.setdefault("log", {})
+        self.extras["log"]["Metrics/tracking_err_mean"] = dist.mean().item()
+        self.extras["log"]["Metrics/tracking_err_p95"] = torch.quantile(dist, 0.95).item()
+        self.extras["log"]["Metrics/success_rate"] = (dist < 0.3).float().mean().item()
