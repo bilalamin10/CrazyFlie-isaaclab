@@ -105,7 +105,7 @@ class QuadcopterEnv(DirectRLEnv):
         self._actions = actions.clone().clamp(-1.0, 1.0)
         
         # --- SHAPE LOGIC SWITCH ---
-        t = self.episode_length_buf * self.step_dt
+        t = self.episode_length_buf * self.step_dt + self.cfg.trajectory_lookahead
         tx, ty = self._trajectory.get_target_xy(t)
         self._desired_pos_w[:, 0] = tx + self._terrain.env_origins[:, 0]
         self._desired_pos_w[:, 1] = ty + self._terrain.env_origins[:, 1]
