@@ -35,6 +35,12 @@ parser.add_argument("--num_episodes", type=int, default=None,
 parser.add_argument("--metrics_out", type=str, default=None,
                     help="Path to save evaluation metrics as JSON.")
 
+parser.add_argument("--trajectory_lookahead", type=float, default=None,
+                    help="Setpoint lookahead in seconds (overrides cfg).")
+
+parser.add_argument("--num_steps", type=int, default=2400,
+                    help="Total simulation steps to run during eval (default 2400 = ~40 sec).")
+
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -91,6 +97,9 @@ def main():
     )
     # Force eval_mode for evaluation runs — disables training noise/tilt
     env_cfg.eval_mode = True
+    #env_cfg.trajectory_lookahead = 0.2  # temporary for this experiment
+    if args_cli.trajectory_lookahead is not None:
+        env_cfg.trajectory_lookahead = args_cli.trajectory_lookahead
 
     agent_cfg: RslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
     # Shim for IsaacLab 2.1 / newer rsl_rl compatibility
@@ -164,8 +173,19 @@ def main():
     obs, _ = env.get_observations()
     timestep = 0
     per_step_error = []
+    step_count = 0
 
     # --- Eval metrics accumulators ---
+    TRANSIENT_STEPS = 120  # skip first 2 seconds (60 Hz simulation)
+
+    # In the accumulator block:
+    if step_count > TRANSIENT_STEPS:
+        log_dict = extras.get("log", {}) if isinstance(extras, dict) else {}
+        for k in metric_keys:
+            if k in log_dict:
+                v = log_dict[k]
+                metric_sums[k] += float(v)
+                metric_counts[k] += 1
     metric_keys = [
         "Metrics/tracking_err_mean",
         "Metrics/tracking_err_p95",
@@ -176,7 +196,7 @@ def main():
     episodes_completed = 0
     num_envs = env.unwrapped.num_envs
     prev_dones = torch.zeros(num_envs, dtype=torch.bool, device=env.unwrapped.device)
-
+    
     # simulate environment
     while simulation_app.is_running():
         start_time = time.time()
@@ -196,15 +216,11 @@ def main():
         if "Metrics/tracking_err_mean" in log_dict:
             per_step_error.append(float(log_dict["Metrics/tracking_err_mean"]))
 
-        # --- Count episodes (rising edges of done flags) ---
-        if isinstance(dones, torch.Tensor):
-            new_dones = dones & ~prev_dones
-            episodes_completed += int(new_dones.sum().item())
-            prev_dones = dones.clone()
-
-        # --- Stop if we've collected enough episodes ---
-        if args_cli.num_episodes is not None and episodes_completed >= args_cli.num_episodes:
-            print(f"[INFO] Reached {episodes_completed} episodes, stopping eval.")
+        # --- Step-based termination (run for fixed simulation time) ---
+        step_count += 1
+        if step_count >= args_cli.num_steps:
+            print(f"[INFO] Reached {step_count} simulation steps "
+                f"({step_count/60:.1f}s), stopping eval.")
             break
 
         if args_cli.video:

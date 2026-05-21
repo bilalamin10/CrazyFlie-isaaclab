@@ -26,6 +26,9 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     state_space = 0
     debug_vis = True
 
+    # Setpoint shifting lookahead — seconds into the future the policy "sees" the target
+    trajectory_lookahead: float = 0.0
+
     # initial tilt in rads
     initial_rotation_range: tuple[float, float] = (-3.14, 3.14)
 
