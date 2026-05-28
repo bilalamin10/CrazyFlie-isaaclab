@@ -22,12 +22,16 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     episode_length_s = 20.0
     decimation = 2
     action_space = 4
-    observation_space = 16
+    #observation_space = 16
+    observation_space = 16 + 32 * 4   # base obs + action_history_length * action_space
     state_space = 0
     debug_vis = True
 
     # Setpoint shifting lookahead — seconds into the future the policy "sees" the target
     trajectory_lookahead: float = 0.0
+
+    # Action history length
+    action_history_length: int = 32
 
     # initial tilt in rads
     initial_rotation_range: tuple[float, float] = (-3.14, 3.14)
@@ -94,7 +98,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     moment_scale = 0.01
 
     # reward scales
-    lin_vel_reward_scale: float = -0.2
+    lin_vel_reward_scale: float = -2.0
     ang_vel_reward_scale: float = -0.05
     distance_to_goal_reward_scale: float = 35.0
     tilt_penalty_scale: float = -0.5
