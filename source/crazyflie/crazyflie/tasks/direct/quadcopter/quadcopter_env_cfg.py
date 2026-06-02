@@ -22,8 +22,8 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     episode_length_s = 20.0
     decimation = 2
     action_space = 4
-    #observation_space = 16
-    observation_space = 16 + 32 * 4   # base obs + action_history_length * action_space
+    observation_space = 16
+    #observation_space = 16 + 32 * 4   # base obs + action_history_length * action_space
     state_space = 0
     debug_vis = True
 
@@ -31,7 +31,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     trajectory_lookahead: float = 0.0
 
     # Action history length
-    action_history_length: int = 32
+    action_history_length: int = 0
 
     # initial tilt in rads
     initial_rotation_range: tuple[float, float] = (-3.14, 3.14)
@@ -128,3 +128,9 @@ class QuadcopterHoverCfg(QuadcopterEnvCfg):
 class QuadcopterStaticCfg(QuadcopterEnvCfg):
     trajectory_type: str = "static"
     # trajectory_speed irrelevant — target is stationary
+
+@configclass
+class QuadcopterStaticAHCfg(QuadcopterStaticCfg):
+    """Static task WITH action history (Eschmann-style)."""
+    action_history_length: int = 32
+    observation_space: int = 16 + 32 * 4   # 144 total obs = base obs + action_history_length * action_space

@@ -66,10 +66,11 @@ class QuadcopterEnv(DirectRLEnv):
         self._desired_pos_w = torch.zeros(self.num_envs, 3, device=self.device)
 
         # Action history buffer (for observation)
-        self._action_history = torch.zeros(
-            self.num_envs, self.cfg.action_history_length, 4,
-            device=self.device,
-        )
+        if self.cfg.action_history_length > 0:
+            self._action_history = torch.zeros(
+                self.num_envs, self.cfg.action_history_length, 4,
+                device=self.device,
+            )
 
         # Logging
         self._episode_sums = {
@@ -111,9 +112,10 @@ class QuadcopterEnv(DirectRLEnv):
         self._actions = actions.clone().clamp(-1.0, 1.0)
 
         # Shift action history: drop oldest, append newest
-        self._action_history = torch.roll(self._action_history, shifts=-1, dims=1)
-        self._action_history[:, -1, :] = self._actions
-        
+        if self.cfg.action_history_length > 0:
+            self._action_history = torch.roll(self._action_history, shifts=-1, dims=1)
+            self._action_history[:, -1, :] = self._actions
+
         # --- SHAPE LOGIC SWITCH ---
         t = self.episode_length_buf * self.step_dt + self.cfg.trajectory_lookahead
         tx, ty = self._trajectory.get_target_xy(t)
@@ -165,20 +167,27 @@ class QuadcopterEnv(DirectRLEnv):
             pos_w, quat_w, self._desired_pos_w
         ) # Result is in Body Frame
 
-        action_history_flat = self._action_history.reshape(self.num_envs, -1)
+        #action_history_flat = self._action_history.reshape(self.num_envs, -1)
         
         # --- 4. CONCATENATE ---
-        obs = torch.cat(
-            [
-                lin_vel_b,     # Body Frame Linear Vel
-                ang_vel_b,     # Body Frame Angular Vel
-                quat_w,        # World Frame Orientation
-                proj_grav_b,   # Body Frame Gravity
-                desired_pos_b, # Body Frame Relative Pos
-                action_history_flat,  # Action History NEW: 128 dims for N=32
-            ],
-            dim=-1,
-        )
+        if self.cfg.action_history_length > 0 and hasattr(self, '_action_history'):
+            action_history_flat = self._action_history.reshape(self.num_envs, -1)
+            obs = torch.cat([
+                desired_pos_b,
+                lin_vel_b,
+                ang_vel_b,
+                proj_grav_b,
+                action_history_flat,
+                quat_w,
+            ], dim=-1)
+        else:
+            obs = torch.cat([
+                desired_pos_b,
+                lin_vel_b,
+                ang_vel_b,
+                proj_grav_b,
+                quat_w,  # 
+            ], dim=-1)
 
         #print range
         #print(f"lin_vel: {lin_vel_b.min()}, {lin_vel_b.max()}")
@@ -330,7 +339,8 @@ class QuadcopterEnv(DirectRLEnv):
         self._desired_pos_w[env_ids, 2] = self._trajectory.get_target_z()
 
         # Reset action history for newly-reset envs
-        self._action_history[env_ids] = 0.0
+        if self.cfg.action_history_length > 0:
+            self._action_history[env_ids] = 0.0
         
     def _set_debug_vis_impl(self, debug_vis: bool):
         # create markers if necessary for the first time

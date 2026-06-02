@@ -176,16 +176,8 @@ def main():
     step_count = 0
 
     # --- Eval metrics accumulators ---
-    TRANSIENT_STEPS = 120  # skip first 2 seconds (60 Hz simulation)
-
-    # In the accumulator block:
-    if step_count > TRANSIENT_STEPS:
-        log_dict = extras.get("log", {}) if isinstance(extras, dict) else {}
-        for k in metric_keys:
-            if k in log_dict:
-                v = log_dict[k]
-                metric_sums[k] += float(v)
-                metric_counts[k] += 1
+    TRANSIENT_STEPS = 1  # skip first 2 seconds (60 Hz simulation)
+    TOTAL_STEPS = 2400
     metric_keys = [
         "Metrics/tracking_err_mean",
         "Metrics/tracking_err_p95",
@@ -199,6 +191,20 @@ def main():
     
     # simulate environment
     while simulation_app.is_running():
+        step_count += 1
+        if step_count >= TOTAL_STEPS:
+            print(f"[INFO] Reached {step_count} simulation steps "
+                f"({step_count * env.unwrapped.step_dt:.1f}s simulated), stopping eval.") 
+            break
+
+        # In the accumulator block:
+        if step_count > TRANSIENT_STEPS:
+            log_dict = extras.get("log", {}) if isinstance(extras, dict) else {}
+            for k in metric_keys:
+                if k in log_dict:
+                    v = log_dict[k]
+                    metric_sums[k] += float(v)
+                    metric_counts[k] += 1
         start_time = time.time()
         with torch.inference_mode():
             actions = policy(obs)
@@ -206,11 +212,14 @@ def main():
 
         # --- Accumulate metrics from env.extras (logged by _log_eval_metrics) ---
         log_dict = extras.get("log", {}) if isinstance(extras, dict) else {}
-        for k in metric_keys:
-            if k in log_dict:
-                v = log_dict[k]
-                metric_sums[k] += float(v)
-                metric_counts[k] += 1
+
+        # Only accumulate metrics after the transient phase
+        if step_count > TRANSIENT_STEPS:
+            for k in metric_keys:
+                if k in log_dict:
+                    v = log_dict[k]
+                    metric_sums[k] += float(v)
+                    metric_counts[k] += 1
 
         # --- Per-step time series capture ---
         if "Metrics/tracking_err_mean" in log_dict:
