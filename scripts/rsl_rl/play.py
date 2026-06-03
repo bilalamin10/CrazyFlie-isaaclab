@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Script to play a checkpoint if an RL agent from RSL-RL."""
+"""Script to play a checkpoint of an RL agent from RSL-RL."""
 
 """Launch Isaac Sim Simulator first."""
 
@@ -29,23 +29,23 @@ parser.add_argument(
     help="Use the pre-trained checkpoint from Nucleus.",
 )
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time, if possible.")
-
 parser.add_argument("--num_episodes", type=int, default=None,
-                    help="Number of complete episodes to run before exiting. If None, runs forever.")
+                    help="[LEGACY] Ignored. Eval now runs for --num_steps steps.")
 parser.add_argument("--metrics_out", type=str, default=None,
                     help="Path to save evaluation metrics as JSON.")
-
 parser.add_argument("--trajectory_lookahead", type=float, default=None,
                     help="Setpoint lookahead in seconds (overrides cfg).")
-
 parser.add_argument("--num_steps", type=int, default=2400,
-                    help="Total simulation steps to run during eval (default 2400 = ~40 sec).")
+                    help="Total simulation steps per eval cell (default 2400 = ~40 sec at 60 Hz).")
+parser.add_argument("--eval_trajectory", type=str, default=None,
+                    help="Override trajectory type for cross-shape eval (e.g. circle, lemniscate).")
 
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
+
 # always enable cameras to record video
 if args_cli.video:
     args_cli.enable_cameras = True
@@ -57,8 +57,11 @@ simulation_app = app_launcher.app
 """Rest everything follows."""
 
 import gymnasium as gym
+import json
 import os
 import time
+
+import numpy as np
 import torch
 
 from rsl_rl.runners import OnPolicyRunner
@@ -68,7 +71,12 @@ from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.dict import print_dict
 from isaaclab.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
 
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper, export_policy_as_jit, export_policy_as_onnx
+from isaaclab_rl.rsl_rl import (
+    RslRlOnPolicyRunnerCfg,
+    RslRlVecEnvWrapper,
+    export_policy_as_jit,
+    export_policy_as_onnx,
+)
 
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path, parse_env_cfg
@@ -76,28 +84,33 @@ import crazyflie.tasks  # noqa: F401 — triggers gym.register
 
 
 # ==================== DEBUG: CHECK WHICH ENV FILE IS USED ====================
-import crazyflie.tasks.direct.quadcopter.quadcopter_env as custom_env
-print("="*80)
+import crazyflie.tasks.direct.quadcopter.quadcopter_env as _custom_env
+print("=" * 80)
 print("DEBUG: Using CUSTOM quadcopter_env.py from:")
-print(custom_env.__file__)
-print("="*80)
-
-import isaaclab_tasks
+print(_custom_env.__file__)
+print("=" * 80)
 print("Isaac Lab tasks path:", isaaclab_tasks.__file__)
-# ============================================================================
-
-# PLACEHOLDER: Extension template (do not remove this comment)
+# =============================================================================
 
 
 def main():
     """Play with RSL-RL agent."""
-    # parse configuration
+
+    # ------------------------------------------------------------------ #
+    # Configuration                                                        #
+    # ------------------------------------------------------------------ #
     env_cfg = parse_env_cfg(
-        args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs, use_fabric=not args_cli.disable_fabric
+        args_cli.task,
+        device=args_cli.device,
+        num_envs=args_cli.num_envs,
+        use_fabric=not args_cli.disable_fabric,
     )
-    # Force eval_mode for evaluation runs — disables training noise/tilt
+    # Force eval_mode — disables training noise, tilt randomisation, throw
     env_cfg.eval_mode = True
-    #env_cfg.trajectory_lookahead = 0.2  # temporary for this experiment
+
+    if args_cli.eval_trajectory is not None:
+        env_cfg.trajectory_type = args_cli.eval_trajectory
+
     if args_cli.trajectory_lookahead is not None:
         env_cfg.trajectory_lookahead = args_cli.trajectory_lookahead
 
@@ -105,14 +118,14 @@ def main():
     # Shim for IsaacLab 2.1 / newer rsl_rl compatibility
     if not hasattr(agent_cfg, "obs_groups") or agent_cfg.obs_groups is None:
         agent_cfg.obs_groups = {"policy": ["obs"]}
-    # specify directory for logging experiments
-    log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
-    log_root_path = os.path.abspath(log_root_path)
+
+    log_root_path = os.path.abspath(os.path.join("logs", "rsl_rl", agent_cfg.experiment_name))
     print(f"[INFO] Loading experiment from directory: {log_root_path}")
+
     if args_cli.use_pretrained_checkpoint:
         resume_path = get_published_pretrained_checkpoint("rsl_rl", args_cli.task)
         if not resume_path:
-            print("[INFO] Unfortunately a pre-trained checkpoint is currently unavailable for this task.")
+            print("[INFO] No pre-trained checkpoint available for this task.")
             return
     elif args_cli.checkpoint:
         resume_path = retrieve_file_path(args_cli.checkpoint)
@@ -121,14 +134,14 @@ def main():
 
     log_dir = os.path.dirname(resume_path)
 
-    # create isaac environment
+    # ------------------------------------------------------------------ #
+    # Environment                                                          #
+    # ------------------------------------------------------------------ #
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
 
-    # convert to single-agent instance if required by the RL algorithm
     if isinstance(env.unwrapped, DirectMARLEnv):
         env = multi_agent_to_single_agent(env)
 
-    # wrap for video recording
     if args_cli.video:
         video_kwargs = {
             "video_folder": os.path.join(log_dir, "videos", "play"),
@@ -136,31 +149,25 @@ def main():
             "video_length": args_cli.video_length,
             "disable_logger": True,
         }
-        print("[INFO] Recording videos during training.")
+        print("[INFO] Recording videos during evaluation.")
         print_dict(video_kwargs, nesting=4)
         env = gym.wrappers.RecordVideo(env, **video_kwargs)
 
-    # wrap around environment for rsl-rl
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
+    # ------------------------------------------------------------------ #
+    # Policy                                                               #
+    # ------------------------------------------------------------------ #
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
-    # load previously trained model
     ppo_runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
     ppo_runner.load(resume_path)
-
-    # obtain the trained policy for inference
     policy = ppo_runner.get_inference_policy(device=env.unwrapped.device)
 
-    # extract the neural network module
-    # we do this in a try-except to maintain backwards compatibility.
     try:
-        # version 2.3 onwards
-        policy_nn = ppo_runner.alg.policy
+        policy_nn = ppo_runner.alg.policy          # rsl_rl >= 2.3
     except AttributeError:
-        # version 2.2 and below
-        policy_nn = ppo_runner.alg.actor_critic
+        policy_nn = ppo_runner.alg.actor_critic    # rsl_rl <= 2.2
 
-    # export policy to onnx/jit
     export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
     export_policy_as_jit(policy_nn, ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.pt")
     export_policy_as_onnx(
@@ -169,105 +176,99 @@ def main():
 
     dt = env.unwrapped.step_dt
 
-    # reset environment
-    obs, _ = env.get_observations()
-    timestep = 0
-    per_step_error = []
-    step_count = 0
+    # ------------------------------------------------------------------ #
+    # Eval bookkeeping                                                     #
+    # ------------------------------------------------------------------ #
+    # How many leading steps to discard before accumulating metrics.
+    # 300 steps ≈ 5 seconds at 60 Hz — lets the staggered-start transient settle.
+    TRANSIENT_STEPS = 00
+    TOTAL_STEPS     = args_cli.num_steps   # default 2400 ≈ 40 sec
 
-    # --- Eval metrics accumulators ---
-    TRANSIENT_STEPS = 1  # skip first 2 seconds (60 Hz simulation)
-    TOTAL_STEPS = 2400
     metric_keys = [
         "Metrics/tracking_err_mean",
         "Metrics/tracking_err_p95",
         "Metrics/success_rate",
     ]
-    metric_sums = {k: 0.0 for k in metric_keys}
-    metric_counts = {k: 0 for k in metric_keys}
-    episodes_completed = 0
-    num_envs = env.unwrapped.num_envs
-    prev_dones = torch.zeros(num_envs, dtype=torch.bool, device=env.unwrapped.device)
-    
-    # simulate environment
-    while simulation_app.is_running():
-        step_count += 1
-        if step_count >= TOTAL_STEPS:
-            print(f"[INFO] Reached {step_count} simulation steps "
-                f"({step_count * env.unwrapped.step_dt:.1f}s simulated), stopping eval.") 
-            break
+    metric_sums   = {k: 0.0 for k in metric_keys}
+    metric_counts = {k: 0   for k in metric_keys}
 
-        # In the accumulator block:
-        if step_count > TRANSIENT_STEPS:
-            log_dict = extras.get("log", {}) if isinstance(extras, dict) else {}
-            for k in metric_keys:
-                if k in log_dict:
-                    v = log_dict[k]
-                    metric_sums[k] += float(v)
-                    metric_counts[k] += 1
+    per_step_error = []   # full time series including transient (for plotting)
+    step_count     = 0
+    num_envs       = env.unwrapped.num_envs
+
+    # ------------------------------------------------------------------ #
+    # Simulation loop                                                      #
+    # ------------------------------------------------------------------ #
+    obs, _ = env.get_observations()
+    timestep = 0
+
+    while simulation_app.is_running():
         start_time = time.time()
+
         with torch.inference_mode():
             actions = policy(obs)
             obs, _, dones, extras = env.step(actions)
 
-        # --- Accumulate metrics from env.extras (logged by _log_eval_metrics) ---
+        step_count += 1
+
+        # ---------- metric accumulation ----------
         log_dict = extras.get("log", {}) if isinstance(extras, dict) else {}
 
-        # Only accumulate metrics after the transient phase
-        if step_count > TRANSIENT_STEPS:
-            for k in metric_keys:
-                if k in log_dict:
-                    v = log_dict[k]
-                    metric_sums[k] += float(v)
-                    metric_counts[k] += 1
-
-        # --- Per-step time series capture ---
+        # Always capture for the time-series plot (includes transient)
         if "Metrics/tracking_err_mean" in log_dict:
             per_step_error.append(float(log_dict["Metrics/tracking_err_mean"]))
 
-        # --- Step-based termination (run for fixed simulation time) ---
-        step_count += 1
-        if step_count >= args_cli.num_steps:
-            print(f"[INFO] Reached {step_count} simulation steps "
-                f"({step_count/60:.1f}s), stopping eval.")
+        # Only accumulate into the reported averages AFTER the transient
+        if step_count > TRANSIENT_STEPS:
+            for k in metric_keys:
+                if k in log_dict:
+                    metric_sums[k]   += float(log_dict[k])
+                    metric_counts[k] += 1
+
+        # ---------- termination ----------
+        if step_count >= TOTAL_STEPS:
+            print(
+                f"[INFO] Reached {step_count} simulation steps "
+                f"({step_count * dt:.1f}s simulated), stopping eval."
+            )
             break
 
+        # Video mode termination
         if args_cli.video:
             timestep += 1
             if timestep == args_cli.video_length:
                 break
 
+        # Real-time pacing
         sleep_time = dt - (time.time() - start_time)
         if args_cli.real_time and sleep_time > 0:
             time.sleep(sleep_time)
 
-    # --- Write metrics JSON ---
+    # ------------------------------------------------------------------ #
+    # Write outputs                                                        #
+    # ------------------------------------------------------------------ #
     if args_cli.metrics_out is not None:
-        import json
         means = {
             k: (metric_sums[k] / metric_counts[k]) if metric_counts[k] > 0 else float("nan")
             for k in metric_keys
         }
-        means["num_episodes"] = episodes_completed
-        means["num_envs"] = num_envs
+        means["num_steps_total"]      = step_count
+        means["num_steps_aggregated"] = max(step_count - TRANSIENT_STEPS, 0)
+        means["num_envs"]             = num_envs
+
         os.makedirs(os.path.dirname(os.path.abspath(args_cli.metrics_out)), exist_ok=True)
         with open(args_cli.metrics_out, "w") as f:
             json.dump(means, f, indent=2)
         print(f"[INFO] Saved metrics to {args_cli.metrics_out}")
         print(json.dumps(means, indent=2))
 
-    # --- Save per-step time series as .npy ---
-    if args_cli.metrics_out is not None:
-        import numpy as np
         npy_path = args_cli.metrics_out.replace(".json", "_timeseries.npy")
         np.save(npy_path, np.array(per_step_error))
         print(f"[INFO] Saved time series to {npy_path}")
 
-    # close the simulator
     env.close()
 
+
 if __name__ == "__main__":
-    # run the main function
     main()
-    # close sim app
     simulation_app.close()

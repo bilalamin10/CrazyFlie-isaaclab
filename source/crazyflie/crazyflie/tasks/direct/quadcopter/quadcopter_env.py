@@ -277,8 +277,13 @@ class QuadcopterEnv(DirectRLEnv):
         # --- 2. APPLY POSITION MODIFIERS ---
         # Apply Terrain Origin
         default_root_state[:, :3] += self._terrain.env_origins[env_ids]
+        
         #  Increase Spawn Height (Add 2.0m to Z)
-        default_root_state[:, 2] += 2.0
+        # Apply spawn height
+        if self.cfg.eval_mode:
+            default_root_state[:, 2] += self.cfg.trajectory_z_height  # spawn at trajectory height
+        else:
+            default_root_state[:, 2] += 2.0
 
         # --- 3. APPLY ROTATION MODIFIERS ---
         if self.cfg.eval_mode:
@@ -326,9 +331,12 @@ class QuadcopterEnv(DirectRLEnv):
         self._robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
 
         # --- 6. CURRICULUM (update max dist before sampling new targets) ---
-        log = self._curriculum.step(self._trajectory)
-        if log:
-            self.extras.setdefault("log", {}).update(log)
+        if not self.cfg.eval_mode:
+            log = self._curriculum.step(self._trajectory)
+        else:
+            # In eval: fix target at 2m radius (representative but not too far)
+            if hasattr(self._trajectory, 'current_max_dist'):
+                self._trajectory.current_max_dist[:] = 2.0
 
         # --- 7. RESET TRAJECTORY AND COMPUTE INITIAL TARGET ---
         self._trajectory.reset(env_ids)
