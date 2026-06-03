@@ -2,7 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 
-df = pd.read_csv("logs/eval_matrix.csv")
+df = pd.read_csv("logs/eval_matrix_v2.csv")
 shapes = ["Hover", "Static", "Circle", "Lemniscate", "Lissajous"]
 
 # Success rate heatmap
@@ -32,6 +32,6 @@ ax.set_ylabel("Training trajectory")
 ax.set_title("Cross-trajectory generalization: mean success_rate (m)\nlower is better, mean ± std over 3 seeds")
 plt.colorbar(im, ax=ax, label="Mean success_rate (m)")
 plt.tight_layout()
-plt.savefig("logs/success_rate_matrix.png", dpi=150, bbox_inches="tight")
-print("Saved logs/success_rate_matrix.png")
+plt.savefig("logs/plots/success_rate_matrix_v2.png", dpi=150, bbox_inches="tight")
+print("Saved logs/plots/success_rate_matrix_v2.png")
 plt.show()

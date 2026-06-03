@@ -21,14 +21,14 @@ SEEDS = [0, 1, 2]
 NUM_EPISODES = 30
 NUM_ENVS = 64
 LOGS_DIR = Path("logs/rsl_rl")
-OUTPUT_CSV = Path("logs/eval_matrix.csv")
+OUTPUT_CSV = Path("logs/eval_matrix_v2.csv")
 PLAY_SCRIPT = "scripts/rsl_rl/play.py"
 TRAINING_ITER = 399  # which checkpoint to evaluate (model_399.pt)
 
 
 def find_checkpoint(train_shape: str, seed: int) -> Path:
     """Find the model_399.pt for a given (train_shape, seed)."""
-    pattern = f"{train_shape}_seed{seed}/*/model_{TRAINING_ITER}.pt"
+    pattern = f"{train_shape}_v2_seed{seed}/*/model_{TRAINING_ITER}.pt"
     matches = sorted(LOGS_DIR.glob(pattern))
     if not matches:
         raise FileNotFoundError(f"No checkpoint found for {train_shape} seed {seed}")
@@ -46,7 +46,7 @@ def evaluate(train_shape: str, eval_shape: str, seed: int) -> dict:
         "--task", f"Isaac-Quadcopter-{eval_shape}-Direct-v0",
         "--num_envs", str(NUM_ENVS),
         "--checkpoint", str(ckpt),
-        "--num_episodes", str(NUM_EPISODES),
+        "--num_steps", "2400",        # ← replaces --num_episodes
         "--metrics_out", str(out_json),
         "--headless",
     ]
@@ -78,7 +78,7 @@ def main():
             "tracking_err_mean": metrics.get("Metrics/tracking_err_mean"),
             "tracking_err_p95":  metrics.get("Metrics/tracking_err_p95"),
             "success_rate":      metrics.get("Metrics/success_rate"),
-            "num_episodes":      metrics.get("num_episodes"),
+            "num_steps_total":   metrics.get("num_steps_total"),   # ← updated
         })
 
     # Write CSV
