@@ -1,6 +1,6 @@
 import pandas as pd
 
-df = pd.read_csv("logs/eval_matrix.csv")
+df = pd.read_csv("logs/eval_matrix_v2.csv")
 shapes_order = ["Hover", "Static", "Circle", "Lemniscate", "Lissajous"]
 
 print("=" * 70)

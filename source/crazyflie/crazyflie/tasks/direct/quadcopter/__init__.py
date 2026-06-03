@@ -44,4 +44,10 @@ gym.register(
     },
 )
 
+gym.register(
+    id="Isaac-Quadcopter-Land-Direct-v0",
+    entry_point=f"{__name__}.quadcopter_env:QuadcopterEnv",
+    kwargs={"env_cfg_entry_point": f"{__name__}.quadcopter_env_cfg:QuadcopterLandCfg",}
+)
+
 print(f"[INFO] Registered Isaac-Quadcopter-* tasks from: {__file__}")

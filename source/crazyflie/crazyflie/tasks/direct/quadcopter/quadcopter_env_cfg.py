@@ -54,6 +54,14 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     trajectory_speed: float = 0.5
     trajectory_z_height: float = 1.5
 
+    # 3D cuboid bounds for Hover/Static tasks
+    cuboid_x_min: float = -3.0
+    cuboid_x_max: float =  3.0
+    cuboid_y_min: float = -3.0
+    cuboid_y_max: float =  3.0
+    cuboid_z_min: float =  0.5   # minimum hover height
+    cuboid_z_max: float =  3.0   # maximum hover height
+
     # eval-specific switches
     eval_mode: bool = False
     eval_initial_rotation_range: tuple[float, float] = (-0.05, 0.05)
@@ -128,9 +136,17 @@ class QuadcopterHoverCfg(QuadcopterEnvCfg):
 class QuadcopterStaticCfg(QuadcopterEnvCfg):
     trajectory_type: str = "static"
     # trajectory_speed irrelevant — target is stationary
+    static_goal_curriculum: bool = False
 
 @configclass
 class QuadcopterStaticAHCfg(QuadcopterStaticCfg):
     """Static task WITH action history (Eschmann-style)."""
     action_history_length: int = 32
     observation_space: int = 16 + 32 * 4   # 144 total obs = base obs + action_history_length * action_space
+
+@configclass
+class QuadcopterLandCfg(QuadcopterEnvCfg):
+    trajectory_type: str = "land"
+    static_goal_curriculum: bool = False
+    # Target is at z=0 — reward needs to handle ground proximity
+    # Spawn drone at random height, it must descend

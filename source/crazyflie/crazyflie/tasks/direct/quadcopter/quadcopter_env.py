@@ -281,9 +281,11 @@ class QuadcopterEnv(DirectRLEnv):
         #  Increase Spawn Height (Add 2.0m to Z)
         # Apply spawn height
         if self.cfg.eval_mode:
-            default_root_state[:, 2] += self.cfg.trajectory_z_height  # spawn at trajectory height
-        else:
-            default_root_state[:, 2] += 2.0
+            target_z = self._trajectory.get_target_z()
+            if isinstance(target_z, torch.Tensor):
+                default_root_state[:, 2] += target_z[env_ids]
+            else:
+                default_root_state[:, 2] += target_z
 
         # --- 3. APPLY ROTATION MODIFIERS ---
         if self.cfg.eval_mode:
@@ -344,7 +346,11 @@ class QuadcopterEnv(DirectRLEnv):
         tx, ty = self._trajectory.get_target_xy(t_zero)
         self._desired_pos_w[env_ids, 0] = tx[env_ids] + self._terrain.env_origins[env_ids, 0]
         self._desired_pos_w[env_ids, 1] = ty[env_ids] + self._terrain.env_origins[env_ids, 1]
-        self._desired_pos_w[env_ids, 2] = self._trajectory.get_target_z()
+        target_z = self._trajectory.get_target_z()
+        if isinstance(target_z, torch.Tensor):
+            self._desired_pos_w[env_ids, 2] = target_z[env_ids]
+        else:
+            self._desired_pos_w[env_ids, 2] = target_z
 
         # Reset action history for newly-reset envs
         if self.cfg.action_history_length > 0:
