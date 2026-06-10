@@ -74,13 +74,12 @@ class QuadcopterEnv(DirectRLEnv):
 
         # Logging
         self._episode_sums = {
-            key: torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
-            for key in [
-                "lin_vel",
-                "ang_vel",
-                "distance_to_goal",
-                "tilt_penalty",
-            ]
+            "distance_to_goal": torch.zeros(self.num_envs, device=self.device),
+            "lin_vel":           torch.zeros(self.num_envs, device=self.device),
+            "ang_vel":           torch.zeros(self.num_envs, device=self.device),
+            "orientation":       torch.zeros(self.num_envs, device=self.device),
+            "action_magnitude":  torch.zeros(self.num_envs, device=self.device),
+            "survival":          torch.zeros(self.num_envs, device=self.device),
         }
 
         # Get specific body indices
@@ -200,36 +199,66 @@ class QuadcopterEnv(DirectRLEnv):
 
     #  enable this _get_rewards without fuzzy logic
     def _get_rewards(self) -> torch.Tensor:
-        lin_vel = torch.sum(torch.square(self._robot.data.root_lin_vel_b), dim=1)
-        ang_vel = torch.sum(torch.square(self._robot.data.root_ang_vel_b), dim=1)
-        distance_to_goal = torch.linalg.norm(self._desired_pos_w - self._robot.data.root_pos_w, dim=1)
-        distance_to_goal_mapped = 1 - torch.tanh(distance_to_goal / 0.8)
+        # ── 1. Compute state quantities 
+        lin_vel_sq = torch.sum(
+            torch.square(self._robot.data.root_lin_vel_b), dim=1
+        )
+        ang_vel_sq = torch.sum(
+            torch.square(self._robot.data.root_ang_vel_b), dim=1
+        )
 
-        # Simple fixed tilt penalty (no fuzzy for now)
-        local_up_vec = torch.tensor([0.0, 0.0, 1.0], device=self.device).expand(self.num_envs, 3)
-        robot_up_vec_w = math_utils.quat_apply(self._robot.data.root_quat_w, local_up_vec)
-        tilt_error = 1.0 - robot_up_vec_w[:, 2]
+        # 3D position error vector and squared norm  (Eschmann: -Crp * ||p||^2)
+        pos_error_vec = self._desired_pos_w - self._robot.data.root_pos_w
+        pos_error_sq  = torch.sum(pos_error_vec ** 2, dim=1)   # ||p||^2
+        distance_to_goal = torch.linalg.norm(pos_error_vec, dim=1)
+        tanh_guidance    = 1.0 - torch.tanh(distance_to_goal / 2.0)
+        quad_precision   = -pos_error_sq * 0.1
 
-        tilt_penalty = tilt_error * self.cfg.tilt_penalty_scale
+        # Orientation: tilt proxy  (Eschmann: -Crq * (1 - qw^2))
+        robot_up_vec_w = self._robot.data.root_quat_w  # placeholder; use actual up vector
+        # Use the same up-vector calculation you had before:
+        robot_up_vec_w = math_utils.quat_rotate(
+            self._robot.data.root_quat_w,
+            torch.tensor([0.0, 0.0, 1.0], device=self.device).expand(self.num_envs, 3)
+        )
+        tilt_error = 1.0 - robot_up_vec_w[:, 2]   # 0 when upright, 2 when inverted
 
+        # Action magnitude  (Eschmann: -Cra * ||a||, linear not squared)
+        action_magnitude = torch.linalg.norm(self._actions, dim=1)
+
+        # Survival bonus: constant positive reward each step
+        survival = torch.ones(self.num_envs, device=self.device)
+
+        # ── 2. Build reward dict
         rewards = {
-            "lin_vel": lin_vel * self.cfg.lin_vel_reward_scale * self.step_dt,
-            "ang_vel": ang_vel * self.cfg.ang_vel_reward_scale * self.step_dt,
-            "distance_to_goal": distance_to_goal_mapped * self.cfg.distance_to_goal_reward_scale * self.step_dt,
-            "tilt_penalty": tilt_penalty * self.step_dt,
+            # Quadratic position cost (NEGATIVE — penalises distance)
+            #"pos_error":        -pos_error_sq       * self.cfg.pos_error_reward_scale     * self.step_dt,
+            "distance_to_goal": (tanh_guidance * 5.0 + quad_precision) * self.step_dt,
+
+            # Quadratic velocity penalties
+            "lin_vel":           lin_vel_sq          * self.cfg.lin_vel_reward_scale       * self.step_dt,
+            "ang_vel":           ang_vel_sq          * self.cfg.ang_vel_reward_scale       * self.step_dt,
+
+            # Orientation penalty
+            "orientation":       tilt_error          * self.cfg.orientation_reward_scale   * self.step_dt,
+
+            # Action magnitude penalty (linear)
+            "action_magnitude":  action_magnitude    * self.cfg.action_magnitude_scale     * self.step_dt,
+
+            # Survival bonus (positive)
+            "survival":          survival             * self.cfg.survival_reward_scale      * self.step_dt,
         }
 
         reward = torch.sum(torch.stack(list(rewards.values())), dim=0)
 
-        # === CRITICAL SAFETY ===
-        reward = torch.clamp(reward, -10.0, 30.0)
-        reward[self.reset_terminated] -= 15.0   # strong death penalty
+        reward = torch.clamp(reward, -100.0, 5.0)
+        reward[self.reset_terminated] -= 5.0
 
-        # Logging
+        # ── 5. Logging
         for key, value in rewards.items():
             self._episode_sums[key] += value
+
         self._log_eval_metrics()
-        
         return reward
     
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
