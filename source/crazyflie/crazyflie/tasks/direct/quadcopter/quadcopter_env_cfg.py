@@ -106,16 +106,11 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     moment_scale = 0.01
 
     # reward scales
-    lin_vel_reward_scale: float = -0.05
-    ang_vel_reward_scale: float = -0.01
-    #distance_to_goal_reward_scale: float = 35.0
-    #pos_error_reward_scale: float = 2.0        # was distance_to_goal_reward_scale=35
-    #tilt_penalty_scale: float = -0.5
-    orientation_reward_scale: float = -0.5     # was tilt_penalty_scale=-0.5
-    # Action magnitude: -Cra * ||a|| (linear penalty on action size)
-    action_magnitude_scale: float = -0.01
-    # Survival bonus: +Crs (positive constant each step, discourages early termination)
-    survival_reward_scale: float = 1.0
+    lin_vel_reward_scale: float = -2.0
+    ang_vel_reward_scale: float = -0.05
+    distance_to_goal_reward_scale: float = 35.0
+    tilt_penalty_scale: float = -0.5
+
 
 @configclass
 class QuadcopterCircleCfg(QuadcopterEnvCfg):
