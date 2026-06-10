@@ -110,6 +110,10 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     ang_vel_reward_scale: float = -0.05
     distance_to_goal_reward_scale: float = 35.0
     tilt_penalty_scale: float = -0.5
+    
+    # Tanh scale parameter "a" in reward: 1 - tanh(distance / a)
+    # Small a = narrow reward (only near target), large a = wide reward (signal from far)
+    tanh_scale: float = 0.8   # current baseline
 
 
 @configclass
