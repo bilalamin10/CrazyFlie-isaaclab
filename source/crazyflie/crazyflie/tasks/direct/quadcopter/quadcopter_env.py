@@ -229,9 +229,22 @@ class QuadcopterEnv(DirectRLEnv):
 
         tilt_penalty = tilt_error * self.cfg.tilt_penalty_scale
 
+        # ── Scheme B: annealed penalty weights ──
+        if self.cfg.anneal_penalties and not self.cfg.eval_mode:
+            p = min(self.common_step_counter / self.cfg.penalty_anneal_steps, 1.0)
+            lin_vel_scale = (self.cfg.lin_vel_scale_init
+                            + (self.cfg.lin_vel_scale_target - self.cfg.lin_vel_scale_init) * p)
+            ang_vel_scale = (self.cfg.ang_vel_scale_init
+                            + (self.cfg.ang_vel_scale_target - self.cfg.ang_vel_scale_init) * p)
+            self.extras.setdefault("log", {})
+            self.extras["log"]["Curriculum/lin_vel_scale"] = float(lin_vel_scale)
+        else:
+            lin_vel_scale = self.cfg.lin_vel_reward_scale
+            ang_vel_scale = self.cfg.ang_vel_reward_scale
+
         rewards = {
-            "lin_vel": lin_vel * self.cfg.lin_vel_reward_scale * self.step_dt,
-            "ang_vel": ang_vel * self.cfg.ang_vel_reward_scale * self.step_dt,
+            "lin_vel": lin_vel * lin_vel_scale * self.step_dt,
+            "ang_vel": ang_vel * ang_vel_scale * self.step_dt,
             "distance_to_goal": distance_to_goal_mapped * self.cfg.distance_to_goal_reward_scale * self.step_dt,
             "tilt_penalty": tilt_penalty * self.step_dt,
         }

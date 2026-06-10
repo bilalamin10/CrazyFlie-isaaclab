@@ -32,6 +32,8 @@ parser.add_argument("--tanh_scale", type=float, default=None,
                     help="Override tanh scale parameter in reward.")
 parser.add_argument("--anneal_tanh", action="store_true",
                     help="Enable Scheme A: anneal tanh scale from init to target.")
+parser.add_argument("--anneal_penalties", action="store_true")
+                    
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -141,6 +143,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     if args_cli.anneal_tanh:
         env_cfg.anneal_tanh = True
+
+    if args_cli.anneal_penalties:
+        env_cfg.anneal_penalties = True
 
     # set the environment seed
     # note: certain randomizations occur in the environment initialization so we set the seed here

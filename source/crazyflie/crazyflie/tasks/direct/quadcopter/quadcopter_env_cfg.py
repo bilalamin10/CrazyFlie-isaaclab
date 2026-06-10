@@ -124,6 +124,14 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
                                     #  so 6000 ≈ first ~250 iterations)
 
 
+    # ── Scheme B: anneal velocity/action penalty weights ──
+    anneal_penalties: bool = False
+    lin_vel_scale_init:  float = 0.0     # no velocity penalty at start
+    lin_vel_scale_target: float = -0.2   # your current value at end
+    ang_vel_scale_init:  float = 0.0
+    ang_vel_scale_target: float = -0.05
+    penalty_anneal_steps: int = 6000     # same schedule length as Scheme A
+
 @configclass
 class QuadcopterCircleCfg(QuadcopterEnvCfg):
     trajectory_type: str = "circle"
