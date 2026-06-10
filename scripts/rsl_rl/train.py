@@ -30,6 +30,8 @@ parser.add_argument("--max_iterations", type=int, default=None, help="RL Policy 
 parser.add_argument("--distributed", action="store_true", default=False, help="Run training with multiple GPUs or nodes.")
 parser.add_argument("--tanh_scale", type=float, default=None,
                     help="Override tanh scale parameter in reward.")
+parser.add_argument("--anneal_tanh", action="store_true",
+                    help="Enable Scheme A: anneal tanh scale from init to target.")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -135,7 +137,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     )
 
     if args_cli.tanh_scale is not None:
-    env_cfg.tanh_scale = args_cli.tanh_scale
+        env_cfg.tanh_scale = args_cli.tanh_scale
+
+    if args_cli.anneal_tanh:
+        env_cfg.anneal_tanh = True
 
     # set the environment seed
     # note: certain randomizations occur in the environment initialization so we set the seed here

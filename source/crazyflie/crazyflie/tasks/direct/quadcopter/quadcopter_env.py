@@ -204,7 +204,23 @@ class QuadcopterEnv(DirectRLEnv):
         ang_vel = torch.sum(torch.square(self._robot.data.root_ang_vel_b), dim=1)
         distance_to_goal = torch.linalg.norm(self._desired_pos_w - self._robot.data.root_pos_w, dim=1)
         #distance_to_goal_mapped = 1 - torch.tanh(distance_to_goal / 0.8)
-        distance_to_goal_mapped = 1 - torch.tanh(distance_to_goal / self.cfg.tanh_scale)
+        #distance_to_goal_mapped = 1 - torch.tanh(distance_to_goal / self.cfg.tanh_scale)
+        # ── Scheme A: annealed tanh scale ──
+        if self.cfg.anneal_tanh and not self.cfg.eval_mode:
+            # Geometric interpolation from init → target over tanh_anneal_steps.
+            # common_step_counter is IsaacLab's built-in env-step counter.
+            progress = min(self.common_step_counter / self.cfg.tanh_anneal_steps, 1.0)
+            current_a = (self.cfg.tanh_scale_init
+                        * (self.cfg.tanh_scale_target / self.cfg.tanh_scale_init) ** progress)
+        else:
+            current_a = (self.cfg.tanh_scale_target if self.cfg.anneal_tanh
+                        else self.cfg.tanh_scale)
+
+        distance_to_goal_mapped = 1 - torch.tanh(distance_to_goal / current_a)
+
+        # Log the schedule so it's visible in TensorBoard
+        self.extras.setdefault("log", {})
+        self.extras["log"]["Curriculum/tanh_scale"] = float(current_a)
 
         # Simple fixed tilt penalty (no fuzzy for now)
         local_up_vec = torch.tensor([0.0, 0.0, 1.0], device=self.device).expand(self.num_envs, 3)
