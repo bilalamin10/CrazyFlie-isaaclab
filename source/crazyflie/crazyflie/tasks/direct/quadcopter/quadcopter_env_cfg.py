@@ -110,10 +110,18 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     ang_vel_reward_scale: float = -0.05
     distance_to_goal_reward_scale: float = 35.0
     tilt_penalty_scale: float = -0.5
-    
+
     # Tanh scale parameter "a" in reward: 1 - tanh(distance / a)
     # Small a = narrow reward (only near target), large a = wide reward (signal from far)
     tanh_scale: float = 0.8   # current baseline
+
+    # ── Scheme A: anneal tanh scale (Eschmann-style reward tightening) ──
+    anneal_tanh: bool = False          # off by default — baseline unaffected
+    tanh_scale_init: float = 2.5       # lenient/wide at start of training
+    tanh_scale_target: float = 0.5     # tight/precise at end
+    tanh_anneal_steps: int = 6000      # env.step() calls to reach target
+                                    # (400 iters × 24 steps/iter = 9600 total,
+                                    #  so 6000 ≈ first ~250 iterations)
 
 
 @configclass
