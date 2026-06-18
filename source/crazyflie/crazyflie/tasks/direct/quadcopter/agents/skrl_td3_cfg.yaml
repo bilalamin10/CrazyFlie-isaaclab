@@ -1,0 +1,85 @@
+# TD3 configuration for Crazyflie quadcopter (skrl 2.0)
+# Off-policy, twin-critic, delayed-policy-update — Eschmann's algorithm family.
+
+seed: 42
+
+# ── Models ──────────────────────────────────────────────────────────────────
+# TD3 needs a deterministic policy and TWO deterministic Q-critics.
+# skrl's Runner auto-creates the target networks (target_policy, target_critic_1/2).
+models:
+  separate: True
+  policy:  # deterministic actor
+    class: DeterministicMixin
+    clip_actions: True
+    network:
+      - name: net
+        input: OBSERVATIONS
+        layers: [512, 256, 128]
+        activations: elu
+    output: ACTIONS
+  critic_1:  # Q1(s, a)
+    class: DeterministicMixin
+    clip_actions: False
+    network:
+      - name: net
+        input: concatenate([OBSERVATIONS, ACTIONS])
+        layers: [512, 256, 128]
+        activations: elu
+    output: ONE
+  critic_2:  # Q2(s, a)
+    class: DeterministicMixin
+    clip_actions: False
+    network:
+      - name: net
+        input: concatenate([OBSERVATIONS, ACTIONS])
+        layers: [512, 256, 128]
+        activations: elu
+    output: ONE
+
+# ── Replay buffer ────────────────────────────────────────────────────────────
+memory:
+  class: RandomMemory
+  memory_size: 1000000   # 1M transitions
+
+# ── TD3 agent (field names from TD3_DEFAULT_CONFIG) ──────────────────────────
+agent:
+  class: TD3
+  gradient_steps: 1
+  batch_size: 4096
+  discount_factor: 0.99
+  polyak: 0.005                      # target network soft-update rate (tau)
+  actor_learning_rate: 1.0e-03
+  critic_learning_rate: 1.0e-03
+  random_timesteps: 2500             # pure exploration before learning starts
+  learning_starts: 2500
+  grad_norm_clip: 0
+  # exploration noise added to actions during rollout
+  exploration:
+    noise:
+      class: GaussianNoise
+      mean: 0.0
+      std: 0.1
+    initial_scale: 1.0
+    final_scale: 0.05
+    timesteps: 80000
+  # target policy smoothing (TD3's signature trick)
+  policy_delay: 2                    # update actor every 2 critic updates
+  smooth_regularization_noise:
+    class: GaussianNoise
+    mean: 0.0
+    std: 0.2
+  smooth_regularization_clip: 0.5
+  state_preprocessor: RunningStandardScaler
+  state_preprocessor_kwargs: null
+  rewards_shaper_scale: 1.0
+  experiment:
+    directory: "quadcopter_td3"
+    experiment_name: ""
+    write_interval: 100
+    checkpoint_interval: 5000
+
+# ── Trainer ──────────────────────────────────────────────────────────────────
+trainer:
+  class: SequentialTrainer
+  timesteps: 160000
+  environment_info: log
