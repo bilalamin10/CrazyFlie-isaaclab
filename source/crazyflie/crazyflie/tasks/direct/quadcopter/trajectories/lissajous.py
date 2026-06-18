@@ -26,3 +26,17 @@ class LissajousTrajectory(TrajectoryBase):
         x = r * torch.sin(a * omega + delta)
         y = r * torch.sin(b * omega)
         return x, y
+    
+    def get_target_velocity_xy(self, t):
+        a = getattr(self.cfg, "lissajous_freq_a", 3.0)
+        b = getattr(self.cfg, "lissajous_freq_b", 2.0)
+        delta = getattr(self.cfg, "lissajous_phase_delta", torch.pi / 2)
+        omega = t * self.cfg.trajectory_speed + self.phase_offset
+        speed = self.cfg.trajectory_speed
+        r = self.cfg.trajectory_radius
+
+        # x = r*sin(a*omega + delta)  →  dx/dt = r*a*cos(a*omega+delta)*speed
+        vx = r * a * torch.cos(a * omega + delta) * speed
+        # y = r*sin(b*omega)          →  dy/dt = r*b*cos(b*omega)*speed
+        vy = r * b * torch.cos(b * omega) * speed
+        return vx, vy

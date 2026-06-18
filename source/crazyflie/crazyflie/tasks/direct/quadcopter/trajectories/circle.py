@@ -9,3 +9,11 @@ class CircleTrajectory(TrajectoryBase):
         theta = t * self.cfg.trajectory_speed + self.phase_offset
         r = self.cfg.trajectory_radius
         return r * torch.cos(theta), r * torch.sin(theta)
+    
+    def get_target_velocity_xy(self, t):
+        theta = t * self.cfg.trajectory_speed + self.phase_offset
+        r = self.cfg.trajectory_radius
+        omega = self.cfg.trajectory_speed
+        vx = -r * omega * torch.sin(theta)
+        vy =  r * omega * torch.cos(theta)
+        return vx, vy

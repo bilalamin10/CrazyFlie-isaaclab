@@ -22,3 +22,9 @@ class TrajectoryBase(ABC):
 
     def get_target_z(self) -> float:
         return self.cfg.trajectory_z_height
+    
+    def get_target_velocity_xy(self, t: torch.Tensor):
+        """Returns (vx, vy) of the target in env-local frame, shape (num_envs,).
+        Default: stationary target → zero velocity. Moving trajectories override."""
+        zeros = torch.zeros(self.num_envs, device=self.device)
+        return zeros, zeros

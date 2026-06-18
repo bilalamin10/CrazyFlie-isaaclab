@@ -51,3 +51,13 @@ gym.register(
 )
 
 print(f"[INFO] Registered Isaac-Quadcopter-* tasks from: {__file__}")
+
+gym.register(
+    id="Isaac-Quadcopter-HoverVel-Direct-v0",
+    entry_point=f"{__name__}.quadcopter_env:QuadcopterEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.quadcopter_env_cfg:QuadcopterHoverVelCfg",
+        "rsl_rl_cfg_entry_point": f"{__name__}.agents.rsl_rl_ppo_cfg:QuadcopterPPORunnerCfg",
+    },
+)

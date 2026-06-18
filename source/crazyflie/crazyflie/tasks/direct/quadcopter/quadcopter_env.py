@@ -29,6 +29,8 @@ class QuadcopterEnvWindow(BaseEnvWindow):
             env: The environment object.
             window_name: The name of the window. Defaults to "IsaacLab".
         """
+        #self._desired_vel_w = None
+
         # initialize base window
         super().__init__(env, window_name)
         # add custom UI elements
@@ -64,6 +66,7 @@ class QuadcopterEnv(DirectRLEnv):
 
         # Goal position
         self._desired_pos_w = torch.zeros(self.num_envs, 3, device=self.device)
+        self._desired_vel_w = None
 
         # Action history buffer (for observation)
         if self.cfg.action_history_length > 0:
@@ -123,6 +126,29 @@ class QuadcopterEnv(DirectRLEnv):
         self._desired_pos_w[:, 1] = ty + self._terrain.env_origins[:, 1]
         self._desired_pos_w[:, 2] = self._trajectory.get_target_z()
 
+        if self.cfg.use_velocity_setpoint:
+            tvx, tvy = self._trajectory.get_target_velocity_xy(t)
+            self._desired_vel_w = torch.zeros(self.num_envs, 3, device=self.device)
+            self._desired_vel_w[:, 0] = tvx
+            self._desired_vel_w[:, 1] = tvy
+            # z velocity stays 0 (constant-height trajectories)
+
+        if not hasattr(self, "_vel_debug_done"):
+            self._vel_debug_done = True
+            print(f"[VEL CHECK] use_velocity_setpoint=True  "
+                f"tvx[0]={tvx[0].item():.4f}  tvy[0]={tvy[0].item():.4f}  "
+                f"traj={self.cfg.trajectory_type}")
+            
+        # if self.cfg.use_velocity_setpoint and self.episode_length_buf[0].item() == 5:
+        #     # Finite-difference check against analytic velocity
+        #     t0 = self.episode_length_buf * self.step_dt
+        #     dt = 1e-4
+        #     x0, y0 = self._trajectory.get_target_xy(t0 - dt)
+        #     x1, y1 = self._trajectory.get_target_xy(t0 + dt)
+        #     fd_vx = (x1 - x0) / (2 * dt)
+        #     avx, avy = self._trajectory.get_target_velocity_xy(t0)
+        #     print(f"[VEL CHECK] analytic vx[0]={avx[0]:.4f}  finite-diff vx[0]={fd_vx[0]:.4f}")
+
         # --- 2. ACTIONS & PHYSICS ---
         # Clamp actions to [-1, 1]
         #print(self._actions[0]) # to print the actions values [1,2,3,4]
@@ -167,6 +193,11 @@ class QuadcopterEnv(DirectRLEnv):
             pos_w, quat_w, self._desired_pos_w
         ) # Result is in Body Frame
 
+        if self.cfg.use_velocity_setpoint and self._desired_vel_w is not None:
+            desired_vel_b = math_utils.quat_rotate_inverse(quat_w, self._desired_vel_w)
+        else:
+            desired_vel_b = torch.zeros(self.num_envs, 3, device=self.device)
+
         #action_history_flat = self._action_history.reshape(self.num_envs, -1)
         
         # --- 4. CONCATENATE ---
@@ -174,6 +205,7 @@ class QuadcopterEnv(DirectRLEnv):
             action_history_flat = self._action_history.reshape(self.num_envs, -1)
             obs = torch.cat([
                 desired_pos_b,
+                desired_vel_b,
                 lin_vel_b,
                 ang_vel_b,
                 proj_grav_b,
@@ -183,6 +215,7 @@ class QuadcopterEnv(DirectRLEnv):
         else:
             obs = torch.cat([
                 desired_pos_b,
+                desired_vel_b,
                 lin_vel_b,
                 ang_vel_b,
                 proj_grav_b,

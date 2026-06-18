@@ -66,6 +66,8 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     eval_mode: bool = False
     eval_initial_rotation_range: tuple[float, float] = (-0.05, 0.05)
 
+    use_velocity_setpoint: bool = False
+
     ui_window_class_type = QuadcopterEnvWindow
 
     # simulation
@@ -170,3 +172,10 @@ class QuadcopterLandCfg(QuadcopterEnvCfg):
     static_goal_curriculum: bool = False
     # Target is at z=0 — reward needs to handle ground proximity
     # Spawn drone at random height, it must descend
+
+@configclass
+class QuadcopterHoverVelCfg(QuadcopterHoverCfg):
+    """3D Hover position controller WITH velocity setpoint in observation."""
+    use_velocity_setpoint: bool = True
+    observation_space: int = 19          # 16 + 3 target-velocity
+    anneal_penalties: bool = True        # bake in the winning curriculum
