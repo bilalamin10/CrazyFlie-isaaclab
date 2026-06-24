@@ -45,6 +45,14 @@ class QuadcopterEnv(DirectRLEnv):
     def __init__(self, cfg: QuadcopterEnvCfg, render_mode: str | None = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
 
+        # TD3 (and other off-policy algos) require finite action-space bounds.
+        # PPO tolerates the default unbounded Box; off-policy clamps to low/high.
+        import numpy as np
+        from gymnasium import spaces
+        self.single_action_space = spaces.Box(
+            low=-1.0, high=1.0, shape=(self.cfg.action_space,), dtype=np.float32
+        )
+
         from .trajectories import TRAJECTORY_REGISTRY
         from .curriculum.goal_distance import GoalDistanceCurriculum
 
