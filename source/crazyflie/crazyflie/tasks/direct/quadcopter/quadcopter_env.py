@@ -262,6 +262,9 @@ class QuadcopterEnv(DirectRLEnv):
         # === CRITICAL SAFETY ===
         reward = torch.clamp(reward, -10.0, 30.0)
         reward[self.reset_terminated] -= 15.0   # strong death penalty
+        
+        # Optuna-tunable reward scale (default 1.0 = unchanged for PPO)
+        reward = reward * getattr(self.cfg, "reward_scale", 1.0)
 
         # Logging
         for key, value in rewards.items():

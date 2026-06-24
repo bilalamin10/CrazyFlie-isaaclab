@@ -66,6 +66,9 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     eval_mode: bool = False
     eval_initial_rotation_range: tuple[float, float] = (-0.05, 0.05)
 
+    # reward scale parameter (for Optuna tuning)
+    reward_scale: float = 1.0
+
     ui_window_class_type = QuadcopterEnvWindow
 
     # simulation
@@ -106,7 +109,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     moment_scale = 0.01
 
     # reward scales
-    lin_vel_reward_scale: float = -2.0
+    lin_vel_reward_scale: float = -0.05
     ang_vel_reward_scale: float = -0.05
     distance_to_goal_reward_scale: float = 35.0
     tilt_penalty_scale: float = -0.5

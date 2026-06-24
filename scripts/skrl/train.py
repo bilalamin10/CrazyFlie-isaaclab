@@ -55,6 +55,13 @@ parser.add_argument(
     help="The RL algorithm used for training the skrl agent.",
 )
 
+parser.add_argument("--reward_scale", type=float, default=None,
+                    help="Reward scale multiplier (for TD3 tuning).")
+
+parser.add_argument("--agent_cfg_file", type=str, default=None,
+                    help="Path to a YAML overriding the agent config (for Optuna).")
+
+
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 # parse the arguments
@@ -128,6 +135,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # override configurations with non-hydra CLI arguments
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
+
+    if args_cli.agent_cfg_file is not None:
+        import yaml as _yaml
+        with open(args_cli.agent_cfg_file) as f:
+            agent_cfg = _yaml.safe_load(f)
+
+    if args_cli.reward_scale is not None:
+        env_cfg.reward_scale = args_cli.reward_scale
 
     # multi-gpu training config
     if args_cli.distributed:
