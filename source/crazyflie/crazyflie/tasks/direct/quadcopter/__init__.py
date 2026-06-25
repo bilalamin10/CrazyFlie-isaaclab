@@ -61,3 +61,13 @@ gym.register(
         "skrl_td3_cfg_entry_point": f"{agents.__name__}:skrl_td3_cfg.yaml",
     },
 )
+
+gym.register(
+    id="Isaac-Quadcopter-HoverTD3-Anneal-Direct-v0",
+    entry_point=f"{__name__}.quadcopter_env:QuadcopterEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.quadcopter_env_cfg:QuadcopterHoverTD3Cfg",
+        "skrl_td3_cfg_entry_point": f"{agents.__name__}:skrl_td3_cfg.yaml",
+    },
+)

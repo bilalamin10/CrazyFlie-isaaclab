@@ -130,10 +130,14 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     # ── Scheme B: anneal velocity/action penalty weights ──
     anneal_penalties: bool = False
     lin_vel_scale_init:  float = 0.0     # no velocity penalty at start
-    lin_vel_scale_target: float = -0.2   # your current value at end
+    lin_vel_scale_target: float = -0.20   # your current value at end
     ang_vel_scale_init:  float = 0.0
-    ang_vel_scale_target: float = -0.05
+    ang_vel_scale_target: float = -0.1
     penalty_anneal_steps: int = 6000     # same schedule length as Scheme A
+
+    action_rate_reward_scale: float = -0.01      # fixed value if not annealing
+    action_rate_scale_init: float = 0.0          # annealing start (lenient)
+    action_rate_scale_target: float = -0.02      # annealing end (strict) — tune
 
 @configclass
 class QuadcopterCircleCfg(QuadcopterEnvCfg):
@@ -173,3 +177,16 @@ class QuadcopterLandCfg(QuadcopterEnvCfg):
     static_goal_curriculum: bool = False
     # Target is at z=0 — reward needs to handle ground proximity
     # Spawn drone at random height, it must descend
+
+@configclass
+class QuadcopterHoverTD3Cfg(QuadcopterHoverCfg):
+    """3D Hover for TD3 — Eschmann recipe: annealed penalties + action-rate."""
+    anneal_penalties: bool = True
+    # ramp velocity penalty from 0 → stronger-than-PPO to force settling
+    lin_vel_scale_init: float = 0.0
+    lin_vel_scale_target: float = -0.2     # stronger than the -0.05 default
+    ang_vel_scale_init: float = 0.0
+    ang_vel_scale_target: float = -0.1
+    action_rate_scale_init: float = 0.0
+    action_rate_scale_target: float = -0.02
+    penalty_anneal_steps: int = 30000      # ~40% of 160k-step training

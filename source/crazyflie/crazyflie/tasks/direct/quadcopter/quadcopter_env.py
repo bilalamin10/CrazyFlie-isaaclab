@@ -64,6 +64,8 @@ class QuadcopterEnv(DirectRLEnv):
         # Total thrust and moment applied to the base of the quadcopter
         self._actions = torch.zeros(self.num_envs, gym.spaces.flatdim(self.single_action_space), device=self.device)
         
+        self._prev_actions = torch.zeros_like(self._actions)
+
         self._thrust = torch.zeros(self.num_envs, 1, 3, device=self.device)
         self._moment = torch.zeros(self.num_envs, 1, 3, device=self.device)
 
@@ -88,6 +90,7 @@ class QuadcopterEnv(DirectRLEnv):
                 "ang_vel",
                 "distance_to_goal",
                 "tilt_penalty",
+                "action_rate",
             ]
         }
 
@@ -117,6 +120,7 @@ class QuadcopterEnv(DirectRLEnv):
         light_cfg.func("/World/Light", light_cfg)
 
     def _pre_physics_step(self, actions: torch.Tensor):
+        self._prev_actions = self._actions.clone()    # capture OLD action first
         self._actions = actions.clone().clamp(-1.0, 1.0)
 
         # Shift action history: drop oldest, append newest
@@ -246,15 +250,50 @@ class QuadcopterEnv(DirectRLEnv):
                             + (self.cfg.ang_vel_scale_target - self.cfg.ang_vel_scale_init) * p)
             self.extras.setdefault("log", {})
             self.extras["log"]["Curriculum/lin_vel_scale"] = float(lin_vel_scale)
+
+            # # --- TEMP DEBUG ---
+            # if not hasattr(self, "_dbg_count"):
+            #     self._dbg_count = 0
+            # self._dbg_count += 1
+            # if self._dbg_count % 200 == 0:
+            #     print(f"[ANNEAL] dbg={self._dbg_count} "
+            #           f"common_step={self.common_step_counter} "
+            #           f"p={p:.4f} lin_vel_scale={lin_vel_scale:.4f}")
+
+            # Print curriculum schedule periodically (visible during training)
+
         else:
             lin_vel_scale = self.cfg.lin_vel_reward_scale
             ang_vel_scale = self.cfg.ang_vel_reward_scale
 
+        # if not hasattr(self, "_anneal_dbg") or self.common_step_counter % 1000 == 0:
+        #     self._anneal_dbg = True
+        #     print(f"[ANNEAL] step={self.common_step_counter} lin_vel_scale={lin_vel_scale:.4f}")
+
+        # Action-rate penalty (Eschmann ||Δaction||²) — punishes twitchy control,
+        # forces the policy to hold steady output once settled.
+        action_rate = torch.sum(torch.square(self._actions - self._prev_actions), dim=1)
+
+        # annealed scale (ramps in like velocity penalty)
+        if self.cfg.anneal_penalties and not self.cfg.eval_mode:
+            action_rate_scale = (self.cfg.action_rate_scale_init
+                + (self.cfg.action_rate_scale_target - self.cfg.action_rate_scale_init) * p)
+        else:
+            action_rate_scale = self.cfg.action_rate_reward_scale
+
+        # Print curriculum periodically (only meaningful when annealing is on)
+        if (self.cfg.anneal_penalties and not self.cfg.eval_mode
+                and self.common_step_counter % 2000 == 0):
+            print(f"[CURRICULUM] step={self.common_step_counter} "
+                  f"p={p:.3f} lin_vel={lin_vel_scale:.4f} "
+                  f"ang_vel={ang_vel_scale:.4f} action_rate={action_rate_scale:.4f}",
+                  flush=True)
         rewards = {
             "lin_vel": lin_vel * lin_vel_scale * self.step_dt,
             "ang_vel": ang_vel * ang_vel_scale * self.step_dt,
             "distance_to_goal": distance_to_goal_mapped * self.cfg.distance_to_goal_reward_scale * self.step_dt,
             "tilt_penalty": tilt_penalty * self.step_dt,
+            "action_rate": action_rate * action_rate_scale * self.step_dt,
         }
 
         reward = torch.sum(torch.stack(list(rewards.values())), dim=0)
@@ -262,7 +301,7 @@ class QuadcopterEnv(DirectRLEnv):
         # === CRITICAL SAFETY ===
         reward = torch.clamp(reward, -10.0, 30.0)
         reward[self.reset_terminated] -= 15.0   # strong death penalty
-        
+
         # Optuna-tunable reward scale (default 1.0 = unchanged for PPO)
         reward = reward * getattr(self.cfg, "reward_scale", 1.0)
 
