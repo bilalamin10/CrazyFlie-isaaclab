@@ -139,6 +139,9 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     action_rate_scale_init: float = 0.0          # annealing start (lenient)
     action_rate_scale_target: float = -0.02      # annealing end (strict) — tune
 
+    position_quad_scale: float = 0.0   # tune this — the near-goal precision strength
+    position_quad_scale_target: float = 0.0   # annealing target (TD3 overrides to 2.0)
+    
 @configclass
 class QuadcopterCircleCfg(QuadcopterEnvCfg):
     trajectory_type: str = "circle"
@@ -190,3 +193,4 @@ class QuadcopterHoverTD3Cfg(QuadcopterHoverCfg):
     action_rate_scale_init: float = 0.0
     action_rate_scale_target: float = -0.02
     penalty_anneal_steps: int = 30000      # ~40% of 160k-step training
+    position_quad_scale_target: float = 2.0   # tune this — the near-goal precision strength

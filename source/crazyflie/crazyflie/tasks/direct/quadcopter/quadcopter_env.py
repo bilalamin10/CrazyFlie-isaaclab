@@ -89,6 +89,7 @@ class QuadcopterEnv(DirectRLEnv):
                 "lin_vel",
                 "ang_vel",
                 "distance_to_goal",
+                "position_quadratic",
                 "tilt_penalty",
                 "action_rate",
             ]
@@ -215,6 +216,7 @@ class QuadcopterEnv(DirectRLEnv):
         lin_vel = torch.sum(torch.square(self._robot.data.root_lin_vel_b), dim=1)
         ang_vel = torch.sum(torch.square(self._robot.data.root_ang_vel_b), dim=1)
         distance_to_goal = torch.linalg.norm(self._desired_pos_w - self._robot.data.root_pos_w, dim=1)
+        position_error_sq = torch.square(distance_to_goal)   # ||p_error||²
         #distance_to_goal_mapped = 1 - torch.tanh(distance_to_goal / 0.8)
         #distance_to_goal_mapped = 1 - torch.tanh(distance_to_goal / self.cfg.tanh_scale)
         # ── Scheme A: annealed tanh scale ──
@@ -281,6 +283,12 @@ class QuadcopterEnv(DirectRLEnv):
         else:
             action_rate_scale = self.cfg.action_rate_reward_scale
 
+        # Annealed quadratic position cost scale (ramps in like the penalties)
+        if self.cfg.anneal_penalties and not self.cfg.eval_mode:
+            position_quad_scale = self.cfg.position_quad_scale_target * p
+        else:
+            position_quad_scale = self.cfg.position_quad_scale
+
         # Print curriculum periodically (only meaningful when annealing is on)
         if (self.cfg.anneal_penalties and not self.cfg.eval_mode
                 and self.common_step_counter % 2000 == 0):
@@ -292,6 +300,7 @@ class QuadcopterEnv(DirectRLEnv):
             "lin_vel": lin_vel * lin_vel_scale * self.step_dt,
             "ang_vel": ang_vel * ang_vel_scale * self.step_dt,
             "distance_to_goal": distance_to_goal_mapped * self.cfg.distance_to_goal_reward_scale * self.step_dt,
+            "position_quadratic": -position_error_sq * position_quad_scale * self.step_dt,
             "tilt_penalty": tilt_penalty * self.step_dt,
             "action_rate": action_rate * action_rate_scale * self.step_dt,
         }
