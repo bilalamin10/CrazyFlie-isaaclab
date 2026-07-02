@@ -113,6 +113,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     ang_vel_reward_scale: float = -0.05
     distance_to_goal_reward_scale: float = 35.0
     tilt_penalty_scale: float = -0.5
+    eschmann_curriculum: bool = False   # off by default; only TD3-Anneal turns it on
 
     # Tanh scale parameter "a" in reward: 1 - tanh(distance / a)
     # Small a = narrow reward (only near target), large a = wide reward (signal from far)
@@ -181,16 +182,44 @@ class QuadcopterLandCfg(QuadcopterEnvCfg):
     # Target is at z=0 — reward needs to handle ground proximity
     # Spawn drone at random height, it must descend
 
+# @configclass
+# class QuadcopterHoverTD3Cfg(QuadcopterHoverCfg):
+#     """3D Hover for TD3 — Eschmann recipe: annealed penalties + action-rate."""
+#     anneal_penalties: bool = True
+#     # ramp velocity penalty from 0 → stronger-than-PPO to force settling
+#     lin_vel_scale_init: float = 0.0
+#     lin_vel_scale_target: float = -0.2     # stronger than the -0.05 default
+#     ang_vel_scale_init: float = 0.0
+#     ang_vel_scale_target: float = -0.1
+#     action_rate_scale_init: float = 0.0
+#     action_rate_scale_target: float = -0.02
+#     penalty_anneal_steps: int = 30000      # ~40% of 160k-step training
+#     position_quad_scale_target: float = 2.0   # tune this — the near-goal precision strength
+
 @configclass
 class QuadcopterHoverTD3Cfg(QuadcopterHoverCfg):
-    """3D Hover for TD3 — Eschmann recipe: annealed penalties + action-rate."""
-    anneal_penalties: bool = True
-    # ramp velocity penalty from 0 → stronger-than-PPO to force settling
-    lin_vel_scale_init: float = 0.0
-    lin_vel_scale_target: float = -0.2     # stronger than the -0.05 default
-    ang_vel_scale_init: float = 0.0
-    ang_vel_scale_target: float = -0.1
-    action_rate_scale_init: float = 0.0
-    action_rate_scale_target: float = -0.02
-    penalty_anneal_steps: int = 30000      # ~40% of 160k-step training
-    position_quad_scale_target: float = 2.0   # tune this — the near-goal precision strength
+    anneal_penalties: bool = False        # turn OFF linear anneal
+    eschmann_curriculum: bool = True      # turn ON multiplicative curriculum
+
+    # Multiplicative curriculum (Eschmann Table 2 style)
+    curriculum_interval: int = 10000      # NC scaled to 160k run (~16 intervals)
+
+    # Velocity penalty: starts tiny, grows ×factor each interval, capped
+    vel_weight_init: float = 0.005
+    vel_weight_limit: float = 0.4         # conservative cap (you saw 1.0 over-damp)
+    vel_factor: float = 1.4
+
+    # Angular velocity penalty
+    angvel_weight_init: float = 0.005
+    angvel_weight_limit: float = 0.2
+    angvel_factor: float = 1.4
+
+    # Action-rate penalty: starts tiny, grows, capped
+    act_weight_init: float = 0.005
+    act_weight_limit: float = 0.2
+    act_factor: float = 1.4
+
+    # Quadratic position cost: also ramped (gives near-goal precision)
+    posquad_weight_init: float = 0.01
+    posquad_weight_limit: float = 0.5
+    posquad_factor: float = 1.3

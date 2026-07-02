@@ -242,60 +242,47 @@ class QuadcopterEnv(DirectRLEnv):
         tilt_error = 1.0 - robot_up_vec_w[:, 2]
 
         tilt_penalty = tilt_error * self.cfg.tilt_penalty_scale
-
-        # ── Scheme B: annealed penalty weights ──
-        if self.cfg.anneal_penalties and not self.cfg.eval_mode:
-            p = min(self.common_step_counter / self.cfg.penalty_anneal_steps, 1.0)
-            lin_vel_scale = (self.cfg.lin_vel_scale_init
-                            + (self.cfg.lin_vel_scale_target - self.cfg.lin_vel_scale_init) * p)
-            ang_vel_scale = (self.cfg.ang_vel_scale_init
-                            + (self.cfg.ang_vel_scale_target - self.cfg.ang_vel_scale_init) * p)
-            self.extras.setdefault("log", {})
-            self.extras["log"]["Curriculum/lin_vel_scale"] = float(lin_vel_scale)
-
-            # # --- TEMP DEBUG ---
-            # if not hasattr(self, "_dbg_count"):
-            #     self._dbg_count = 0
-            # self._dbg_count += 1
-            # if self._dbg_count % 200 == 0:
-            #     print(f"[ANNEAL] dbg={self._dbg_count} "
-            #           f"common_step={self.common_step_counter} "
-            #           f"p={p:.4f} lin_vel_scale={lin_vel_scale:.4f}")
-
-            # Print curriculum schedule periodically (visible during training)
-
-        else:
-            lin_vel_scale = self.cfg.lin_vel_reward_scale
-            ang_vel_scale = self.cfg.ang_vel_reward_scale
-
-        # if not hasattr(self, "_anneal_dbg") or self.common_step_counter % 1000 == 0:
-        #     self._anneal_dbg = True
-        #     print(f"[ANNEAL] step={self.common_step_counter} lin_vel_scale={lin_vel_scale:.4f}")
-
-        # Action-rate penalty (Eschmann ||Δaction||²) — punishes twitchy control,
-        # forces the policy to hold steady output once settled.
+        # Action-rate value (||Δaction||²); its scale comes from the curriculum below
         action_rate = torch.sum(torch.square(self._actions - self._prev_actions), dim=1)
 
-        # annealed scale (ramps in like velocity penalty)
-        if self.cfg.anneal_penalties and not self.cfg.eval_mode:
-            action_rate_scale = (self.cfg.action_rate_scale_init
-                + (self.cfg.action_rate_scale_target - self.cfg.action_rate_scale_init) * p)
-        else:
-            action_rate_scale = self.cfg.action_rate_reward_scale
 
-        # Annealed quadratic position cost scale (ramps in like the penalties)
-        if self.cfg.anneal_penalties and not self.cfg.eval_mode:
-            position_quad_scale = self.cfg.position_quad_scale_target * p
+        # ── Eschmann-style multiplicative curriculum ──
+        if self.cfg.eschmann_curriculum and not self.cfg.eval_mode:
+            n = self.common_step_counter // self.cfg.curriculum_interval
+            lin_vel_scale = -min(
+                self.cfg.vel_weight_init * (self.cfg.vel_factor ** n),
+                self.cfg.vel_weight_limit)
+            ang_vel_scale = -min(
+                self.cfg.angvel_weight_init * (self.cfg.angvel_factor ** n),
+                self.cfg.angvel_weight_limit)
+            action_rate_scale = -min(
+                self.cfg.act_weight_init * (self.cfg.act_factor ** n),
+                self.cfg.act_weight_limit)
+            position_quad_scale = min(
+                self.cfg.posquad_weight_init * (self.cfg.posquad_factor ** n),
+                self.cfg.posquad_weight_limit)
+            self.extras.setdefault("log", {})
+            self.extras["log"]["Curriculum/lin_vel_scale"] = float(lin_vel_scale)
+            self.extras["log"]["Curriculum/position_quad_scale"] = float(position_quad_scale)
+            
+            if (self.cfg.eschmann_curriculum and not self.cfg.eval_mode
+                    and self.common_step_counter % 5000 == 0):
+                print(f"[CURRICULUM] step={self.common_step_counter} n={n} "
+                    f"lin_vel={lin_vel_scale:.4f} action_rate={action_rate_scale:.4f} "
+                    f"posquad={position_quad_scale:.4f}", flush=True)
+        elif self.cfg.eval_mode:
+            # Freeze at the converged (max) weights for evaluation
+            lin_vel_scale = -self.cfg.vel_weight_limit
+            ang_vel_scale = -self.cfg.angvel_weight_limit
+            action_rate_scale = -self.cfg.act_weight_limit
+            position_quad_scale = self.cfg.posquad_weight_limit
         else:
+            # fallback to fixed values
+            lin_vel_scale = self.cfg.lin_vel_reward_scale
+            ang_vel_scale = self.cfg.ang_vel_reward_scale
+            action_rate_scale = self.cfg.action_rate_reward_scale
             position_quad_scale = self.cfg.position_quad_scale
 
-        # Print curriculum periodically (only meaningful when annealing is on)
-        if (self.cfg.anneal_penalties and not self.cfg.eval_mode
-                and self.common_step_counter % 2000 == 0):
-            print(f"[CURRICULUM] step={self.common_step_counter} "
-                  f"p={p:.3f} lin_vel={lin_vel_scale:.4f} "
-                  f"ang_vel={ang_vel_scale:.4f} action_rate={action_rate_scale:.4f}",
-                  flush=True)
         rewards = {
             "lin_vel": lin_vel * lin_vel_scale * self.step_dt,
             "ang_vel": ang_vel * ang_vel_scale * self.step_dt,
