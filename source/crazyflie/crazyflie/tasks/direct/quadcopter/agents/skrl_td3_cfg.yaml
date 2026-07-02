@@ -8,7 +8,7 @@ models:
     network:
       - name: net
         input: OBSERVATIONS
-        layers: [512, 256, 128]
+        layers: [32, 32]
         activations: elu
     output: tanh(ACTIONS)
   target_policy:
@@ -17,7 +17,7 @@ models:
     network:
       - name: net
         input: OBSERVATIONS
-        layers: [512, 256, 128]
+        layers: [32, 32]
         activations: elu
     output: tanh(ACTIONS)
   critic_1:
@@ -26,7 +26,7 @@ models:
     network:
       - name: net
         input: concatenate([OBSERVATIONS, ACTIONS])
-        layers: [512, 256, 128]
+        layers: [32, 32]
         activations: elu
     output: ONE
   critic_2:
@@ -35,7 +35,7 @@ models:
     network:
       - name: net
         input: concatenate([OBSERVATIONS, ACTIONS])
-        layers: [512, 256, 128]
+        layers: [32, 32]
         activations: elu
     output: ONE
   target_critic_1:
@@ -44,7 +44,7 @@ models:
     network:
       - name: net
         input: concatenate([OBSERVATIONS, ACTIONS])
-        layers: [512, 256, 128]
+        layers: [32, 32]
         activations: elu
     output: ONE
   target_critic_2:
@@ -53,7 +53,7 @@ models:
     network:
       - name: net
         input: concatenate([OBSERVATIONS, ACTIONS])
-        layers: [512, 256, 128]
+        layers: [32, 32]
         activations: elu
     output: ONE
 

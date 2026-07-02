@@ -270,12 +270,20 @@ class QuadcopterEnv(DirectRLEnv):
                 print(f"[CURRICULUM] step={self.common_step_counter} n={n} "
                     f"lin_vel={lin_vel_scale:.4f} action_rate={action_rate_scale:.4f} "
                     f"posquad={position_quad_scale:.4f}", flush=True)
+        # elif self.cfg.eval_mode:
+        #     # Freeze at the converged (max) weights for evaluation
+        #     lin_vel_scale = -self.cfg.vel_weight_limit
+        #     ang_vel_scale = -self.cfg.angvel_weight_limit
+        #     action_rate_scale = -self.cfg.act_weight_limit
+        #     position_quad_scale = self.cfg.posquad_weight_limit
+
         elif self.cfg.eval_mode:
-            # Freeze at the converged (max) weights for evaluation
-            lin_vel_scale = -self.cfg.vel_weight_limit
-            ang_vel_scale = -self.cfg.angvel_weight_limit
-            action_rate_scale = -self.cfg.act_weight_limit
-            position_quad_scale = self.cfg.posquad_weight_limit
+            # Freeze at the fixed reward values used in training
+            lin_vel_scale = self.cfg.lin_vel_reward_scale
+            ang_vel_scale = self.cfg.ang_vel_reward_scale
+            action_rate_scale = self.cfg.action_rate_reward_scale
+            position_quad_scale = self.cfg.position_quad_scale
+
         else:
             # fallback to fixed values
             lin_vel_scale = self.cfg.lin_vel_reward_scale

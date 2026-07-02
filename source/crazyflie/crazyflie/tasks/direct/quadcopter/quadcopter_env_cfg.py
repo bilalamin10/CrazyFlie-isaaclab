@@ -196,30 +196,39 @@ class QuadcopterLandCfg(QuadcopterEnvCfg):
 #     penalty_anneal_steps: int = 30000      # ~40% of 160k-step training
 #     position_quad_scale_target: float = 2.0   # tune this — the near-goal precision strength
 
-@configclass
+# @configclass
+# class QuadcopterHoverTD3Cfg(QuadcopterHoverCfg):
+#     anneal_penalties: bool = False        # turn OFF linear anneal
+#     eschmann_curriculum: bool = True      # turn ON multiplicative curriculum
+
+#     # Multiplicative curriculum (Eschmann Table 2 style)
+#     curriculum_interval: int = 10000      # NC scaled to 160k run (~16 intervals)
+
+#     # Velocity penalty: starts tiny, grows ×factor each interval, capped
+#     vel_weight_init: float = 0.005
+#     vel_weight_limit: float = 0.4         # conservative cap (you saw 1.0 over-damp)
+#     vel_factor: float = 1.4
+
+#     # Angular velocity penalty
+#     angvel_weight_init: float = 0.005
+#     angvel_weight_limit: float = 0.2
+#     angvel_factor: float = 1.4
+
+#     # Action-rate penalty: starts tiny, grows, capped
+#     act_weight_init: float = 0.005
+#     act_weight_limit: float = 0.2
+#     act_factor: float = 1.4
+
+#     # Quadratic position cost: also ramped (gives near-goal precision)
+#     posquad_weight_init: float = 0.01
+#     posquad_weight_limit: float = 0.5
+#     posquad_factor: float = 1.3
+
 class QuadcopterHoverTD3Cfg(QuadcopterHoverCfg):
-    anneal_penalties: bool = False        # turn OFF linear anneal
-    eschmann_curriculum: bool = True      # turn ON multiplicative curriculum
-
-    # Multiplicative curriculum (Eschmann Table 2 style)
-    curriculum_interval: int = 10000      # NC scaled to 160k run (~16 intervals)
-
-    # Velocity penalty: starts tiny, grows ×factor each interval, capped
-    vel_weight_init: float = 0.005
-    vel_weight_limit: float = 0.4         # conservative cap (you saw 1.0 over-damp)
-    vel_factor: float = 1.4
-
-    # Angular velocity penalty
-    angvel_weight_init: float = 0.005
-    angvel_weight_limit: float = 0.2
-    angvel_factor: float = 1.4
-
-    # Action-rate penalty: starts tiny, grows, capped
-    act_weight_init: float = 0.005
-    act_weight_limit: float = 0.2
-    act_factor: float = 1.4
-
-    # Quadratic position cost: also ramped (gives near-goal precision)
-    posquad_weight_init: float = 0.01
-    posquad_weight_limit: float = 0.5
-    posquad_factor: float = 1.3
+    eschmann_curriculum: bool = False
+    anneal_penalties: bool = False
+    # Fixed penalties matching the 0.301m config's annealed endpoint
+    lin_vel_reward_scale: float = -0.2
+    ang_vel_reward_scale: float = -0.1
+    action_rate_reward_scale: float = -0.02
+    position_quad_scale: float = 0.0        # NO quadratic (0.301m was tanh only)
