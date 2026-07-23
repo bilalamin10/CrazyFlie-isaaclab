@@ -104,6 +104,35 @@ Then you can run pre-commit with:
 pre-commit run --all-files
 ```
 
+## Noise ablation for thesis results
+
+The initial baseline experiment compares two policies while keeping the
+curriculum disabled in both cases:
+
+- noise-free training: all four observation-noise scales are zero;
+- noisy training: linear velocity `0.05`, angular velocity `0.02`, position
+  `0.1`, and quaternion-component `0.1` Gaussian standard deviation.
+
+Both policies are evaluated with and without observation noise. This 2 x 2
+design separates the effect of noise on learning from robustness to noise at
+test time. The default run covers all five trajectories and seeds 0, 1, and 2:
+
+```bash
+python scripts/run_noise_ablation.py --dry-run
+python scripts/run_noise_ablation.py
+python scripts/plot_noise_ablation.py
+```
+
+For a quick single-condition check before launching the complete experiment:
+
+```bash
+python scripts/run_noise_ablation.py --shapes Hover --seeds 0 --max-iterations 5
+```
+
+Results are written to `logs/noise_ablation/`. Do not mix the older baseline
+checkpoints with this ablation: their saved environment configurations show
+that observation noise was already enabled, and several used the curriculum.
+
 ## Troubleshooting
 
 ### Pylance Missing Indexing of Extensions

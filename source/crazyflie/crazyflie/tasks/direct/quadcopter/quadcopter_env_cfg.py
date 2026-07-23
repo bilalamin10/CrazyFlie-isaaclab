@@ -42,6 +42,10 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     noise_pos: float = 0.1
     noise_quat: float = 0.1
 
+    # Evaluation is clean by default. Enable this only for robustness tests;
+    # eval_mode still controls deterministic reset conditions independently.
+    eval_observation_noise: bool = False
+
     # curriculum for static goals
     static_goal_curriculum: bool = True
     static_goal_min_dist: float = 0.5

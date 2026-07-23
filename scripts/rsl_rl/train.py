@@ -33,6 +33,17 @@ parser.add_argument("--tanh_scale", type=float, default=None,
 parser.add_argument("--anneal_tanh", action="store_true",
                     help="Enable Scheme A: anneal tanh scale from init to target.")
 parser.add_argument("--anneal_penalties", action="store_true")
+parser.add_argument(
+    "--observation_noise",
+    choices=("on", "off"),
+    default=None,
+    help="Enable the configured observation noise or set all noise scales to zero.",
+)
+parser.add_argument(
+    "--disable_curriculum",
+    action="store_true",
+    help="Disable the static-goal curriculum for a controlled baseline.",
+)
                     
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
@@ -146,6 +157,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     if args_cli.anneal_penalties:
         env_cfg.anneal_penalties = True
+
+    if args_cli.observation_noise == "off":
+        env_cfg.noise_lin_vel = 0.0
+        env_cfg.noise_ang_vel = 0.0
+        env_cfg.noise_pos = 0.0
+        env_cfg.noise_quat = 0.0
+
+    if args_cli.disable_curriculum:
+        env_cfg.static_goal_curriculum = False
 
     # set the environment seed
     # note: certain randomizations occur in the environment initialization so we set the seed here

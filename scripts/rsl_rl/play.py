@@ -39,6 +39,12 @@ parser.add_argument("--num_steps", type=int, default=2400,
                     help="Total simulation steps per eval cell (default 2400 = ~40 sec at 60 Hz).")
 parser.add_argument("--eval_trajectory", type=str, default=None,
                     help="Override trajectory type for cross-shape eval (e.g. circle, lemniscate).")
+parser.add_argument(
+    "--observation_noise",
+    choices=("on", "off"),
+    default="off",
+    help="Apply configured observation noise during evaluation (default: off).",
+)
 
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
@@ -107,6 +113,7 @@ def main():
     )
     # Force eval_mode — disables training noise, tilt randomisation, throw
     env_cfg.eval_mode = True
+    env_cfg.eval_observation_noise = args_cli.observation_noise == "on"
 
     if args_cli.eval_trajectory is not None:
         env_cfg.trajectory_type = args_cli.eval_trajectory

@@ -145,17 +145,23 @@ class QuadcopterEnv(DirectRLEnv):
         quat_w = self._robot.data.root_quat_w.clone()
 
         # --- 2. APPLY NOISE ---
-        if self.cfg.noise_lin_vel > 0.0 and not self.cfg.eval_mode:
+        # Training uses the configured noise scales. Evaluation remains clean
+        # unless eval_observation_noise is explicitly enabled for a robustness
+        # test. This keeps reset randomization and sensor noise independent.
+        apply_observation_noise = (
+            not self.cfg.eval_mode or self.cfg.eval_observation_noise
+        )
+        if self.cfg.noise_lin_vel > 0.0 and apply_observation_noise:
             lin_vel_b += torch.randn_like(lin_vel_b) * self.cfg.noise_lin_vel
             
-        if self.cfg.noise_ang_vel > 0.0 and not self.cfg.eval_mode:
+        if self.cfg.noise_ang_vel > 0.0 and apply_observation_noise:
             ang_vel_b += torch.randn_like(ang_vel_b) * self.cfg.noise_ang_vel
 
-        if self.cfg.noise_quat > 0.0 and not self.cfg.eval_mode:
+        if self.cfg.noise_quat > 0.0 and apply_observation_noise:
             quat_w += torch.randn_like(quat_w) * self.cfg.noise_quat
             quat_w = torch.nn.functional.normalize(quat_w, p=2, dim=-1)
 
-        if self.cfg.noise_pos > 0.0 and not self.cfg.eval_mode:
+        if self.cfg.noise_pos > 0.0 and apply_observation_noise:
             pos_w += torch.randn_like(pos_w) * self.cfg.noise_pos
 
         # --- 3. DERIVED STATES ---
